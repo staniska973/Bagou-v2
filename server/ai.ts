@@ -6,6 +6,8 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
+const MODEL = "gpt-4o-mini";
+
 interface FlashcardGenerationResponse {
   modelAnswer: string;
   variants: {
@@ -48,54 +50,33 @@ export async function generateModelAnswer(
   card: MotherCard,
   userAnswer: string
 ): Promise<FlashcardGenerationResponse> {
-  const prompt = `You are a communication coach helping someone improve their social fluency.
+  const lang = profile.language === "fr" ? "French" : "English";
+  const prompt = `Communication coach. Generate a model answer and 3 variants (safe/medium/bold) for this situation.
 
-USER PROFILE:
-- Tone: ${profile.tonePrimary} (secondary: ${profile.toneSecondary})
-- Risk level: ${profile.riskLevel}
-- Language: ${profile.language}
-- Formality: ${profile.formality} (${profile.tuVous})
-
-FLASHCARD CONTEXT:
+Profile: tone=${profile.tonePrimary}, risk=${profile.riskLevel}, lang=${lang}, formality=${profile.tuVous}
 Situation: ${card.situation}
-Speaker role: ${card.speakerRole}
-Other role: ${card.otherRole}
-Relationship: ${card.relationship}
-Stakes: ${card.stakes}
+Goal: ${card.userGoal}
+Avoid: ${card.antiPatterns?.join(", ") || "none"}
+Vibe: ${card.targetVibe}
+User wrote: "${userAnswer}"
 
-USER GOAL: ${card.userGoal}
+Respond in ${lang}. JSON:
+{"modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."},"rubric":["check1","check2","check3"]}`;
 
-CONSTRAINTS:
-${JSON.stringify(card.constraints)}
-
-THINGS TO AVOID:
-${card.antiPatterns?.join(", ") || "None specified"}
-
-TARGET VIBE: ${card.targetVibe}
-
-The user wrote: "${userAnswer}"
-
-Generate a model answer that matches the user's profile and constraints. Also generate 3 variants (safe, medium, bold).
-
-Respond in JSON format:
-{
-  "modelAnswer": "profiled model answer matching user's tone and style",
-  "variants": {
-    "safe": "very gentle, neutral version",
-    "medium": "balanced, slightly playful version",
-    "bold": "confident, more daring version"
-  },
-  "rubric": ["checklist item 1", "checklist item 2", "checklist item 3"]
-}`;
+  const start = Date.now();
+  console.log(`[AI] generateModelAnswer: calling ${MODEL}...`);
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model: MODEL,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
-    max_completion_tokens: 1024,
+    max_completion_tokens: 800,
   });
 
+  const elapsed = Date.now() - start;
   const content = response.choices[0]?.message?.content || "{}";
+  console.log(`[AI] generateModelAnswer: ${elapsed}ms, content length=${content.length}`);
+
   try {
     const parsed = JSON.parse(content);
     return {
@@ -104,7 +85,7 @@ Respond in JSON format:
       rubric: parsed.rubric || [],
     };
   } catch (e) {
-    console.error("Failed to parse AI response for model answer:", e);
+    console.error("[AI] Failed to parse model answer response:", content);
     return {
       modelAnswer: "Unable to generate model answer",
       variants: { safe: "", medium: "", bold: "" },
@@ -119,46 +100,52 @@ export async function scoreUserAnswer(
   userAnswer: string,
   modelAnswer: string
 ): Promise<FlashcardScoringResponse> {
-  const prompt = `You are a communication coach evaluating a user's response.
+  const lang = profile.language === "fr" ? "French" : "English";
+  const prompt = `Communication coach. Evaluate user's answer vs model answer.
 
-CONTEXT:
 Situation: ${card.situation}
 Goal: ${card.userGoal}
-Constraints: ${JSON.stringify(card.constraints)}
-Anti-patterns to avoid: ${card.antiPatterns?.join(", ") || "None"}
+Avoid: ${card.antiPatterns?.join(", ") || "none"}
+Model: "${modelAnswer}"
+User: "${userAnswer}"
+Profile: tone=${profile.tonePrimary}, risk=${profile.riskLevel}
 
-MODEL ANSWER: "${modelAnswer}"
-USER ANSWER: "${userAnswer}"
+Respond in ${lang}. JSON:
+{"pass":true/false,"ratingSuggested":"hard"|"medium"|"easy","oneFix":"...","redoPrompt":"...","feedback":"..."}`;
 
-USER PROFILE:
-- Tone: ${profile.tonePrimary}
-- Risk level: ${profile.riskLevel}
-- Language: ${profile.language}
-
-Evaluate if the user's answer:
-1. Achieves the goal
-2. Follows the constraints
-3. Avoids anti-patterns
-4. Matches their preferred tone
-
-Respond in JSON:
-{
-  "pass": true/false,
-  "ratingSuggested": "hard" | "medium" | "easy",
-  "oneFix": "single most important improvement",
-  "redoPrompt": "short instruction for redo (e.g., 'make it shorter', 'add more warmth')",
-  "feedback": "brief encouraging feedback"
-}`;
+  const start = Date.now();
+  console.log(`[AI] scoreUserAnswer: calling ${MODEL}...`);
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model: MODEL,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
-    max_completion_tokens: 512,
+    max_completion_tokens: 400,
   });
 
+  const elapsed = Date.now() - start;
   const content = response.choices[0]?.message?.content || "{}";
-  return JSON.parse(content);
+  console.log(`[AI] scoreUserAnswer: ${elapsed}ms`);
+
+  try {
+    const parsed = JSON.parse(content);
+    return {
+      pass: parsed.pass ?? false,
+      ratingSuggested: parsed.ratingSuggested || "medium",
+      oneFix: parsed.oneFix || "",
+      redoPrompt: parsed.redoPrompt || "",
+      feedback: parsed.feedback || "",
+    };
+  } catch (e) {
+    console.error("[AI] Failed to parse scoring response:", content);
+    return {
+      pass: false,
+      ratingSuggested: "medium",
+      oneFix: "Unable to evaluate",
+      redoPrompt: "",
+      feedback: "Scoring unavailable",
+    };
+  }
 }
 
 export async function generateRoleplayTurn(
@@ -170,40 +157,12 @@ export async function generateRoleplayTurn(
   const turnCount = history.filter((m) => m.role === "user").length + 1;
   const isNearEnd = turnCount >= (scenario.turnsMin || 6);
 
-  const systemPrompt = `You are playing the role of "${scenario.aiName}" in a roleplay scenario.
-
-SCENARIO: ${scenario.title}
-CONTEXT: ${scenario.context}
-YOUR PERSONA: ${scenario.aiPersona}
-YOUR STANCE: ${scenario.aiStance}
-BOUNDARIES: ${scenario.aiBoundaries?.join(", ") || "None"}
-
-SCENARIO ARC:
-- Phase 1 (opening): ${scenario.phase1}
-- Phase 2 (resistance): ${scenario.phase2}
-- Phase 3 (resolution): ${scenario.phase3}
-
-Current turn: ${turnCount}
-Near end: ${isNearEnd}
-
-USER PROFILE:
-- Language: ${profile.language}
-- Risk level: ${profile.riskLevel}
-
-RULES:
-1. Stay in character as ${scenario.aiName}
-2. React naturally to the user's message
-3. Follow the scenario arc appropriately
-4. Use the user's preferred language (${profile.language})
-5. If the scenario should end naturally, set stop=true
-6. Keep responses concise (1-3 sentences typically)
-
-Respond in JSON:
-{
-  "aiMessage": "your in-character response",
-  "stop": false,
-  "internalThought": "brief coach note about what happened"
-}`;
+  const systemPrompt = `You are "${scenario.aiName}" in a roleplay. Context: ${scenario.context}
+Persona: ${scenario.aiPersona}. Stance: ${scenario.aiStance}.
+Arc: open=${scenario.phase1}, resist=${scenario.phase2}, resolve=${scenario.phase3}.
+Turn ${turnCount}. ${isNearEnd ? "Near end, wrap up naturally." : ""}
+Language: ${profile.language === "fr" ? "French" : "English"}. Keep responses to 1-3 sentences.
+JSON: {"aiMessage":"...","stop":false,"internalThought":"..."}`;
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
@@ -214,66 +173,80 @@ Respond in JSON:
     { role: "user", content: userMessage },
   ];
 
+  const start = Date.now();
+  console.log(`[AI] generateRoleplayTurn: calling ${MODEL}, turn ${turnCount}...`);
+
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model: MODEL,
     messages,
     response_format: { type: "json_object" },
-    max_completion_tokens: 512,
+    max_completion_tokens: 300,
   });
 
+  const elapsed = Date.now() - start;
   const content = response.choices[0]?.message?.content || "{}";
-  return JSON.parse(content);
+  console.log(`[AI] generateRoleplayTurn: ${elapsed}ms`);
+
+  try {
+    return JSON.parse(content);
+  } catch (e) {
+    console.error("[AI] Failed to parse roleplay response:", content);
+    return { aiMessage: "...", stop: false };
+  }
 }
 
 export async function generateDebrief(
   profile: UserProfile,
   transcript: { role: string; content: string }[]
 ): Promise<DebriefResponse> {
-  const prompt = `You are a communication coach providing a debrief after a roleplay session.
+  const lang = profile.language === "fr" ? "French" : "English";
+  const prompt = `Communication coach debrief. Analyze this roleplay transcript.
 
-USER PROFILE:
-- Language: ${profile.language}
-- Tone preference: ${profile.tonePrimary}
-- Risk level: ${profile.riskLevel}
+Profile: tone=${profile.tonePrimary}, risk=${profile.riskLevel}, lang=${lang}
 
-ROLEPLAY TRANSCRIPT:
+Transcript:
 ${transcript.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n")}
 
-Analyze the user's performance and provide:
-1. 2 specific strengths (things they did well)
-2. 1 key improvement (single most impactful thing to work on)
-3. An optimized rewrite of their weakest response
-4. A redo exercise prompt for practice
+Provide 2 strengths, 1 improvement, rewrite of weakest response, redo exercise, and scores (0-100).
+Respond in ${lang}. JSON:
+{"strengths":["...","..."],"improvement":"...","optimizedRewrite":"...","redoExercise":"...","scores":{"clarity":75,"frame":80,"tone":70,"concision":65}}`;
 
-Score each dimension 0-100:
-- Clarity: Was their message clear?
-- Frame: Did they maintain their frame/composure?
-- Tone: Did they use appropriate tone?
-- Concision: Were they appropriately brief?
-
-Respond in ${profile.language === "fr" ? "French" : "English"}.
-
-JSON format:
-{
-  "strengths": ["strength 1", "strength 2"],
-  "improvement": "key improvement area",
-  "optimizedRewrite": "better version of their weakest response",
-  "redoExercise": "practice prompt for improvement",
-  "scores": {
-    "clarity": 75,
-    "frame": 80,
-    "tone": 70,
-    "concision": 65
-  }
-}`;
+  const start = Date.now();
+  console.log(`[AI] generateDebrief: calling ${MODEL}...`);
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model: MODEL,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
-    max_completion_tokens: 1024,
+    max_completion_tokens: 800,
   });
 
+  const elapsed = Date.now() - start;
   const content = response.choices[0]?.message?.content || "{}";
-  return JSON.parse(content);
+  console.log(`[AI] generateDebrief: ${elapsed}ms`);
+
+  try {
+    const parsed = JSON.parse(content);
+    return {
+      strengths: parsed.strengths || [],
+      improvement: parsed.improvement || "",
+      optimizedRewrite: parsed.optimizedRewrite || "",
+      redoExercise: parsed.redoExercise || "",
+      scores: {
+        clarity: parsed.scores?.clarity ?? 50,
+        frame: parsed.scores?.frame ?? 50,
+        tone: parsed.scores?.tone ?? 50,
+        concision: parsed.scores?.concision ?? 50,
+      },
+    };
+  } catch (e) {
+    console.error("[AI] Failed to parse debrief response:", content);
+    return {
+      strengths: [],
+      improvement: "",
+      optimizedRewrite: "",
+      redoExercise: "",
+      scores: { clarity: 50, frame: 50, tone: 50, concision: 50 },
+    };
+  }
 }
