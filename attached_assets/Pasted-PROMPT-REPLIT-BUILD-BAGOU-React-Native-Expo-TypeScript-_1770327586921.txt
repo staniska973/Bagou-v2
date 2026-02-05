@@ -1,0 +1,155 @@
+PROMPT REPLIT — BUILD “BAGOU” (React Native Expo + TypeScript)
+
+You are building a mobile app named “Bagou” (B-A-G-O-U): a daily communication reflex coach that trains assertiveness and verbal fluency via (1) active recall flashcards (user MUST write/speak before reveal), (2) 4–6 min AI roleplay, (3) short coaching debrief + redo, and (4) spaced repetition scheduling (Anki-like).
+
+LANGUAGES (REQUIRED)
+- The app must be bilingual: French as the primary language (default UI + default content), and English as a full secondary language.
+- Architecture must support easy expansion to other major languages later (e.g., Spanish, Portuguese, Italian, Arabic). Use i18n from the start and store language on user profile + content items.
+- Content pipeline must support generating archetypes in FR and EN at minimum.
+
+PLATFORM & STACK (MVP)
+- Mobile: React Native with Expo (TypeScript)
+- State: Zustand
+- Storage: Supabase (preferred) OR local SQLite for MVP (but must persist profile, SRS, sessions, transcripts)
+- Auth: Supabase Auth (email)
+- AI: OpenAI API
+  - Text: chat completions
+  - Voice MVP: record audio -> STT -> treat as user text -> coach; AI responses can be text (TTS optional later)
+- UI: clean minimal UI, fast flows, low friction
+
+FILES PROVIDED (MUST USE)
+- bagou_models_and_content.json (schemas + example content + AI contracts)
+- bagou_ai_prompts.md (prompts #1–#7 including generation pipeline)
+- bagou_content_pipeline.md (pipeline rules and anti-duplicate gates)
+
+CORE PRODUCT LOOP (DAILY SESSION)
+Default session duration: 12 minutes (must be configurable)
+Home -> Start Session -> Flashcards -> Roleplay -> Debrief -> Stats
+
+1) ONBOARDING (5–8 minutes)
+Create UserProfile with:
+- language (default fr, allow en)
+- primaryMode: text / voice / mixed
+- objectives (theme/skill packs)
+- tonePrimary + toneSecondary (classy_calm / fun_teasing / direct / warm_empathetic / minimalist)
+- riskLevel: safe/medium/bold
+- register: tu/vous + formality
+- limits: sarcasm, explicit flirt, swearing, sensitive topics
+Save to DB.
+
+2) DAILY SESSION (DEFAULT 12 MIN)
+A) FLASHCARDS ACTIVE RECALL (5 min)
+- Pull due cards via SRS (Spaced Repetition)
+- For each card:
+  - Show context + goal + constraint
+  - Require user to TYPE answer (text mode) OR RECORD voice (voice mode)
+  - After input, call AI Prompt #1 (Flashcard Model Answer Generator) to generate profiled model answers + variants
+  - Call AI Prompt #2 (Flashcard Scoring) to score the user answer and return pass, ratingSuggested, oneFix, redoPrompt
+  - Enforce 1 immediate redo (20–30 sec) following redoPrompt (user writes/speaks again)
+  - User selects rating: hard/medium/easy (or auto-suggest with override)
+  - Save last answer + update SRS state
+
+B) ROLEPLAY (5 min)
+- Select one Scenario linked to:
+  - today’s chosen theme OR
+  - cards with lapses >= 2 (weak cluster)
+- Multi-turn conversation (6–10 turns). Each user message:
+  - if voice mode: record -> STT -> use transcript as USER_MESSAGE
+  - call AI Prompt #3 (Roleplay Turn) with scenario + history
+  - show aiMessage; update history
+- Stop when AI returns stop=true OR max turns reached
+
+C) DEBRIEF (2 min)
+- Call AI Prompt #4 (Roleplay Debrief) with transcript
+- Display:
+  - 2 strengths
+  - 1 key improvement (single highest impact)
+  - 1 optimized rewrite (profiled)
+  - 1 redo exercise prompt
+- Save summary, scores, and transcript
+
+SRS SCHEDULING (Anki-like)
+Implement SRS per card with fields: dueDate, intervalDays, ease, reps, lapses, lastRating
+Rules:
+- hard: interval=1 day, ease -= 0.2 (min 1.3), lapses +=1, due tomorrow
+- medium: interval=max(2, round(interval*1.8)), ease unchanged, due = today + interval
+- easy: interval=round(interval*2.5), ease += 0.1 (max 2.7), due = today + interval
+
+BAGOU TWIST (IMPORTANT)
+- If lapses >= 2 on a card, it becomes PRIORITY.
+- PRIORITY cards must trigger a related ROLEPLAY scenario before that card can be rated easy again.
+
+MODES (TEXT + VOICE)
+- Text mode: end-to-end
+- Voice mode MVP:
+  - record audio
+  - transcribe (STT)
+  - scoring/debrief based on text transcript
+  - AI responses can be text (TTS can be added later)
+- Mixed mode: user can switch per session
+
+STATS / PROGRESS
+- streak
+- due today
+- mastered count
+- average scores per dimension (clarity/frame/tone/concision/openness)
+- weak clusters (top tags with lapses)
+
+-----------------------------------------
+CONTENT SYSTEM (THE MOST IMPORTANT PART)
+We must avoid “finite content” and duplicates.
+Implement the “Controlled Content Generation Pipeline” described in bagou_content_pipeline.md.
+
+CONTENT STRATEGY
+- Store ONLY canonical archetypes (MotherCards).
+- DO NOT pre-store thousands of final answers.
+- Generate profiled model answers ON THE FLY (Prompt #1).
+- Scenarios are fewer, higher-quality, and linked to clusters of archetypes.
+
+ADMIN / DEV TOOLS (REQUIRED)
+Create a hidden “Admin” screen or dev script to generate archetypes at scale for a pack.
+
+Implement function:
+generate_archetypes(themeId, packId, subthemeId, language, targetCount)
+Process:
+1) Batch-call AI Prompt #6 (Archetype Generator) to generate 30–60 MotherCards at a time
+2) Run pipeline checks:
+   - Step 2 signature hash (normalize text)
+   - Step 3 hard dedupe by signature
+   - Step 4 near-duplicate check:
+     - MVP: Jaccard similarity of token sets (threshold > 0.88 => reject)
+     - V1: embeddings cosine similarity
+   - Step 5 quality gate (brevity, realistic, constraints/tags present, ethical)
+   - Step 6 distribution balancing by difficulty/channel/intent
+3) Optionally call AI Prompt #7 (Archetype Quality Judge) to validate and suggest rewrites
+4) Persist only accepted MotherCards
+
+Also implement:
+- list_rejected_cards with reason
+- regenerate/rewrite candidate card
+
+-----------------------------------------
+DATA MODEL (MVP)
+Use Supabase tables (or SQLite equivalent):
+- users
+- profiles (UserProfile)
+- mother_cards (MotherCard)
+- scenarios (Scenario)
+- user_srs (SRSState)
+- sessions (session metadata)
+- session_events (flashcard attempts, roleplay transcript, debrief)
+
+UI REQUIREMENTS
+- French default UI
+- English toggle
+- Minimal, modern, fast
+- Strict JSON handling for AI calls (AI returns JSON only; validate and handle errors)
+
+DELIVERABLE
+A working Expo app with:
+- onboarding
+- daily session (flashcards active recall + roleplay + debrief)
+- SRS scheduling
+- text + voice (STT) paths
+- admin generation pipeline for content
+- bilingual FR/EN with extensible i18n architecture

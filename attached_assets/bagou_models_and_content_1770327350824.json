@@ -1,0 +1,516 @@
+{
+  "meta": {
+    "product": "Bagou",
+    "version": "1.0",
+    "note": "Schemas + examples for profiles, SRS, mother cards, scenarios, sessions, and AI request/response contracts."
+  },
+
+  "enums": {
+    "language": ["fr", "en", "es"],
+    "mode": ["text", "voice", "mixed"],
+    "channel": ["text", "irl", "voice"],
+    "tone": ["classy_calm", "fun_teasing", "direct", "warm_empathetic", "minimalist"],
+    "riskLevel": ["safe", "medium", "bold"],
+    "difficulty": ["n1", "n2", "n3"],
+    "rating": ["hard", "medium", "easy"],
+    "intent": [
+      "open",
+      "small_talk",
+      "tease",
+      "invite",
+      "relaunch",
+      "escalate",
+      "set_boundary",
+      "reframe",
+      "negotiate",
+      "handle_criticism",
+      "repair",
+      "exit_gracefully",
+      "deescalate",
+      "assert_request"
+    ],
+    "constraintType": ["max_words", "max_sentences", "must_include", "must_avoid", "style_rule", "time_limit_seconds"],
+    "themeId": ["SOCIAL", "PRO", "DAILY", "RELATIONNEL", "DIFFICULT", "STORY", "CULTURE_SOCIALE"]
+  },
+
+  "schemas": {
+    "UserProfile": {
+      "type": "object",
+      "required": [
+        "userId",
+        "language",
+        "primaryMode",
+        "objectives",
+        "tonePrimary",
+        "toneSecondary",
+        "riskLevel",
+        "easeLevel",
+        "register",
+        "preferences",
+        "limits",
+        "calibration"
+      ],
+      "properties": {
+        "userId": { "type": "string" },
+        "language": { "type": "string", "enum": ["fr", "en", "es"] },
+        "primaryMode": { "type": "string", "enum": ["text", "voice", "mixed"] },
+        "objectives": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "e.g., PRO:negotiation, SOCIAL:humor, RELATIONNEL:relaunch"
+        },
+        "tonePrimary": { "type": "string", "enum": ["classy_calm", "fun_teasing", "direct", "warm_empathetic", "minimalist"] },
+        "toneSecondary": { "type": "string", "enum": ["classy_calm", "fun_teasing", "direct", "warm_empathetic", "minimalist"] },
+        "riskLevel": { "type": "string", "enum": ["safe", "medium", "bold"] },
+        "easeLevel": { "type": "string", "description": "beginner|intermediate|advanced" },
+        "register": {
+          "type": "object",
+          "required": ["tuVous", "formality"],
+          "properties": {
+            "tuVous": { "type": "string", "description": "tu|vous|auto" },
+            "formality": { "type": "string", "description": "casual|neutral|formal" }
+          }
+        },
+        "preferences": {
+          "type": "object",
+          "required": ["defaultConstraints", "dailySessionMinutes"],
+          "properties": {
+            "defaultConstraints": { "type": "array", "items": { "type": "string" } },
+            "dailySessionMinutes": { "type": "number", "description": "Default 12" }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "required": ["allowSarcasm", "allowExplicitFlirt", "allowSwearing", "sensitiveTopics"],
+          "properties": {
+            "allowSarcasm": { "type": "boolean" },
+            "allowExplicitFlirt": { "type": "boolean" },
+            "allowSwearing": { "type": "boolean" },
+            "sensitiveTopics": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "calibration": {
+          "type": "object",
+          "required": ["enabled", "notes", "styleMarkers"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "notes": { "type": "string" },
+            "styleMarkers": {
+              "type": "object",
+              "description": "Learned: typical length, favorite patterns, filler words...",
+              "additionalProperties": { "type": ["string", "number", "boolean"] }
+            }
+          }
+        }
+      }
+    },
+
+    "SRSState": {
+      "type": "object",
+      "required": ["userId", "cardId", "dueDateISO", "intervalDays", "ease", "reps", "lapses", "lastRating", "updatedAtISO"],
+      "properties": {
+        "userId": { "type": "string" },
+        "cardId": { "type": "string" },
+        "dueDateISO": { "type": "string", "description": "YYYY-MM-DD" },
+        "intervalDays": { "type": "number" },
+        "ease": { "type": "number", "description": "Typical 1.3–2.7" },
+        "reps": { "type": "number" },
+        "lapses": { "type": "number" },
+        "lastRating": { "type": "string", "enum": ["hard", "medium", "easy"] },
+        "updatedAtISO": { "type": "string", "description": "ISO timestamp" }
+      }
+    },
+
+    "MotherCard": {
+      "type": "object",
+      "required": [
+        "id",
+        "themeId",
+        "packId",
+        "subthemeId",
+        "language",
+        "channel",
+        "difficulty",
+        "intent",
+        "context",
+        "userGoal",
+        "constraints",
+        "tags",
+        "antiPatterns",
+        "generationHints"
+      ],
+      "properties": {
+        "id": { "type": "string", "description": "Unique archetype id e.g., MC_REL_D5_000001" },
+        "themeId": { "type": "string", "enum": ["SOCIAL", "PRO", "DAILY", "RELATIONNEL", "DIFFICULT", "STORY", "CULTURE_SOCIALE"] },
+        "packId": { "type": "string" },
+        "subthemeId": { "type": "string" },
+
+        "language": { "type": "string", "enum": ["fr", "en", "es"] },
+        "channel": { "type": "string", "enum": ["text", "irl", "voice"] },
+        "difficulty": { "type": "string", "enum": ["n1", "n2", "n3"] },
+        "intent": { "type": "string" },
+
+        "context": {
+          "type": "object",
+          "required": ["situation", "speakerRole", "otherRole", "relationship", "stakes"],
+          "properties": {
+            "situation": { "type": "string" },
+            "speakerRole": { "type": "string" },
+            "otherRole": { "type": "string" },
+            "relationship": { "type": "string" },
+            "stakes": { "type": "string" }
+          }
+        },
+
+        "userGoal": { "type": "string" },
+
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "value"],
+            "properties": {
+              "type": { "type": "string", "enum": ["max_words", "max_sentences", "must_include", "must_avoid", "style_rule", "time_limit_seconds"] },
+              "value": { "type": ["string", "number", "array"] }
+            }
+          }
+        },
+
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "antiPatterns": { "type": "array", "items": { "type": "string" } },
+
+        "generationHints": {
+          "type": "object",
+          "required": ["targetVibe", "modelAnswerRules", "variantRules"],
+          "properties": {
+            "targetVibe": { "type": "string" },
+            "modelAnswerRules": { "type": "array", "items": { "type": "string" } },
+            "variantRules": {
+              "type": "object",
+              "required": ["safe", "medium", "bold"],
+              "properties": {
+                "safe": { "type": "array", "items": { "type": "string" } },
+                "medium": { "type": "array", "items": { "type": "string" } },
+                "bold": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "Scenario": {
+      "type": "object",
+      "required": [
+        "id",
+        "themeId",
+        "packId",
+        "subthemeId",
+        "language",
+        "primaryChannel",
+        "title",
+        "setup",
+        "aiRole",
+        "userRole",
+        "targetSkills",
+        "difficulty",
+        "durationSecondsTarget",
+        "turnsTarget",
+        "arc",
+        "scoring",
+        "debriefTemplate"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "themeId": { "type": "string" },
+        "packId": { "type": "string" },
+        "subthemeId": { "type": "string" },
+        "language": { "type": "string", "enum": ["fr", "en", "es"] },
+        "primaryChannel": { "type": "string", "enum": ["text", "irl", "voice"] },
+        "title": { "type": "string" },
+
+        "setup": {
+          "type": "object",
+          "required": ["context", "objective", "constraints", "startingMessage"],
+          "properties": {
+            "context": { "type": "string" },
+            "objective": { "type": "string" },
+            "constraints": { "type": "array", "items": { "type": "string" } },
+            "startingMessage": { "type": "string" }
+          }
+        },
+
+        "aiRole": {
+          "type": "object",
+          "required": ["name", "persona", "stance", "boundaries"],
+          "properties": {
+            "name": { "type": "string" },
+            "persona": { "type": "string" },
+            "stance": { "type": "string" },
+            "boundaries": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+
+        "userRole": {
+          "type": "object",
+          "required": ["name", "frame"],
+          "properties": {
+            "name": { "type": "string" },
+            "frame": { "type": "string" }
+          }
+        },
+
+        "targetSkills": { "type": "array", "items": { "type": "string" } },
+        "difficulty": { "type": "string", "enum": ["n1", "n2", "n3"] },
+        "durationSecondsTarget": { "type": "number" },
+        "turnsTarget": { "type": "object", "required": ["min", "max"], "properties": { "min": { "type": "number" }, "max": { "type": "number" } } },
+
+        "arc": {
+          "type": "object",
+          "required": ["phase1", "phase2", "phase3", "successEndings", "failureEndings"],
+          "properties": {
+            "phase1": { "type": "string" },
+            "phase2": { "type": "string" },
+            "phase3": { "type": "string" },
+            "successEndings": { "type": "array", "items": { "type": "string" } },
+            "failureEndings": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+
+        "scoring": {
+          "type": "object",
+          "required": ["dimensions", "weights", "ratingRules"],
+          "properties": {
+            "dimensions": { "type": "array", "items": { "type": "string" } },
+            "weights": { "type": "object", "additionalProperties": { "type": "number" } },
+            "ratingRules": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+
+        "debriefTemplate": {
+          "type": "object",
+          "required": ["strengthsCount", "oneKeyImprovementRule", "redoExercise", "rewriteVariantsRules"],
+          "properties": {
+            "strengthsCount": { "type": "number" },
+            "oneKeyImprovementRule": { "type": "string" },
+            "redoExercise": { "type": "array", "items": { "type": "string" } },
+            "rewriteVariantsRules": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "AIContracts": {
+      "type": "object",
+      "required": ["FlashcardGenerationRequest", "FlashcardGenerationResponse", "RoleplayTurnRequest", "RoleplayTurnResponse", "DebriefRequest", "DebriefResponse"],
+      "properties": {
+        "FlashcardGenerationRequest": {
+          "type": "object",
+          "required": ["profile", "motherCard", "requestedVariants"],
+          "properties": {
+            "profile": { "$ref": "#/schemas/UserProfile" },
+            "motherCard": { "$ref": "#/schemas/MotherCard" },
+            "requestedVariants": { "type": "array", "items": { "type": "string", "enum": ["safe", "medium", "bold"] } }
+          }
+        },
+        "FlashcardGenerationResponse": {
+          "type": "object",
+          "required": ["modelAnswerProfiled", "variants", "rubric"],
+          "properties": {
+            "modelAnswerProfiled": { "type": "string" },
+            "variants": {
+              "type": "object",
+              "properties": {
+                "safe": { "type": "string" },
+                "medium": { "type": "string" },
+                "bold": { "type": "string" }
+              }
+            },
+            "rubric": {
+              "type": "object",
+              "required": ["checklist"],
+              "properties": {
+                "checklist": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        },
+
+        "RoleplayTurnRequest": {
+          "type": "object",
+          "required": ["profile", "scenario", "history", "userMessage", "userMessageMode"],
+          "properties": {
+            "profile": { "$ref": "#/schemas/UserProfile" },
+            "scenario": { "$ref": "#/schemas/Scenario" },
+            "history": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["role", "content"],
+                "properties": { "role": { "type": "string", "enum": ["user", "assistant", "system"] }, "content": { "type": "string" } }
+              }
+            },
+            "userMessage": { "type": "string", "description": "Transcribed text if voice." },
+            "userMessageMode": { "type": "string", "enum": ["text", "voice"] }
+          }
+        },
+        "RoleplayTurnResponse": {
+          "type": "object",
+          "required": ["aiMessage", "phase", "stop", "coachHintOptional"],
+          "properties": {
+            "aiMessage": { "type": "string" },
+            "phase": { "type": "string", "description": "phase1|phase2|phase3" },
+            "stop": { "type": "boolean", "description": "True when roleplay should end." },
+            "coachHintOptional": { "type": "string", "description": "Short in-line hint if user is stuck; optional." }
+          }
+        },
+
+        "DebriefRequest": {
+          "type": "object",
+          "required": ["profile", "scenario", "transcript", "userLastBestAttempt"],
+          "properties": {
+            "profile": { "$ref": "#/schemas/UserProfile" },
+            "scenario": { "$ref": "#/schemas/Scenario" },
+            "transcript": { "type": "array", "items": { "type": "object", "required": ["role", "content"], "properties": { "role": { "type": "string" }, "content": { "type": "string" } } } },
+            "userLastBestAttempt": { "type": "string" }
+          }
+        },
+        "DebriefResponse": {
+          "type": "object",
+          "required": ["scores", "strengths", "oneKeyImprovement", "optimizedRewriteProfiled", "redoPrompt"],
+          "properties": {
+            "scores": {
+              "type": "object",
+              "additionalProperties": { "type": "number" },
+              "description": "0-100 per dimension"
+            },
+            "strengths": { "type": "array", "items": { "type": "string" }, "description": "2 bullets" },
+            "oneKeyImprovement": { "type": "string" },
+            "optimizedRewriteProfiled": { "type": "string" },
+            "redoPrompt": { "type": "string", "description": "One constraint-based redo instruction" }
+          }
+        }
+      }
+    }
+  },
+
+  "examples": {
+    "userProfile": {
+      "userId": "user_123",
+      "language": "fr",
+      "primaryMode": "mixed",
+      "objectives": ["RELATIONNEL:relaunch", "PRO:assert_request", "SOCIAL:humor"],
+      "tonePrimary": "classy_calm",
+      "toneSecondary": "fun_teasing",
+      "riskLevel": "medium",
+      "easeLevel": "intermediate",
+      "register": { "tuVous": "tu", "formality": "casual" },
+      "preferences": { "defaultConstraints": ["max_sentences:1", "no_over_explain"], "dailySessionMinutes": 12 },
+      "limits": { "allowSarcasm": true, "allowExplicitFlirt": false, "allowSwearing": false, "sensitiveTopics": [] },
+      "calibration": { "enabled": false, "notes": "", "styleMarkers": { "avg_words": 10 } }
+    },
+
+    "srsState": {
+      "userId": "user_123",
+      "cardId": "MC_REL_D5_000001",
+      "dueDateISO": "2026-02-06",
+      "intervalDays": 3,
+      "ease": 2.3,
+      "reps": 4,
+      "lapses": 1,
+      "lastRating": "medium",
+      "updatedAtISO": "2026-02-05T12:00:00Z"
+    },
+
+    "motherCard": {
+      "id": "MC_REL_D5_000001",
+      "themeId": "RELATIONNEL",
+      "packId": "REL_D5_RELANCHES_TIMING",
+      "subthemeId": "REL_D5_LATE_REPLY_SEEN",
+      "language": "fr",
+      "channel": "text",
+      "difficulty": "n2",
+      "intent": "relaunch",
+      "context": {
+        "situation": "Elle a vu ton message hier soir et n’a pas répondu. Tu relances sans pression, vibe légère.",
+        "speakerRole": "toi",
+        "otherRole": "elle",
+        "relationship": "date",
+        "stakes": "rester cool + ouvrir une option"
+      },
+      "userGoal": "Relancer avec humour léger et ouvrir une option simple.",
+      "constraints": [
+        { "type": "max_sentences", "value": 1 },
+        { "type": "max_words", "value": 12 },
+        { "type": "must_avoid", "value": ["pourquoi tu réponds pas", "??", "t'es fâchée", "je comprends pas"] },
+        { "type": "style_rule", "value": "Ton léger, pas de reproche, pas de justification." }
+      ],
+      "tags": ["seduction", "late_reply", "seen", "humor", "low_pressure"],
+      "antiPatterns": ["over_explain", "needy", "accusatory", "double_text_spam"],
+      "generationHints": {
+        "targetVibe": "léger, sûr de soi",
+        "modelAnswerRules": ["One-liner.", "Playful nudge + open loop.", "No guilt, no complaint."],
+        "variantRules": {
+          "safe": ["Gentle, neutral humor.", "Simple question."],
+          "medium": ["Playful tease + concrete option."],
+          "bold": ["Light challenge, confident frame, still respectful."]
+        }
+      }
+    },
+
+    "scenario": {
+      "id": "SC_REL_D5_000001",
+      "themeId": "RELATIONNEL",
+      "packId": "REL_D5_RELANCHES_TIMING",
+      "subthemeId": "REL_D5_LATE_REPLY_SEEN",
+      "language": "fr",
+      "primaryChannel": "text",
+      "title": "Vu hier — relance légère + plan simple",
+      "setup": {
+        "context": "Bon feeling sur 2–3 jours. Elle a vu ton message hier et n’a pas répondu.",
+        "objective": "Relancer sans pression et proposer un plan simple.",
+        "constraints": ["1–2 phrases max", "pas de reproche", "ton léger"],
+        "startingMessage": "Oups j’ai disparu 😅 Qu’est-ce que tu racontes ?"
+      },
+      "aiRole": {
+        "name": "Elle",
+        "persona": "Sympa mais pas très investie. Elle teste si tu restes cool.",
+        "stance": "busy",
+        "boundaries": ["ne jamais insulter", "pas de sexualité explicite", "pas de manipulation"]
+      },
+      "userRole": { "name": "Toi", "frame": "Calme, joueur, pas en demande." },
+      "targetSkills": ["concision", "frame", "invite", "tone", "openness"],
+      "difficulty": "n2",
+      "durationSecondsTarget": 300,
+      "turnsTarget": { "min": 6, "max": 10 },
+      "arc": {
+        "phase1": "Réponse tardive. Elle reste légère mais floue. Tu gardes ton cadre.",
+        "phase2": "Réponses courtes. Objections. Tu proposes une option concrète sans pression.",
+        "phase3": "Conclusion : accord ou sortie propre avec porte ouverte.",
+        "successEndings": ["Accord sur un créneau.", "Sortie élégante avec porte ouverte."],
+        "failureEndings": ["Reproches, justification, multiples messages.", "Validation-seeking."]
+      },
+      "scoring": {
+        "dimensions": ["clarity", "frame", "tone", "concision", "openness"],
+        "weights": { "clarity": 0.2, "frame": 0.25, "tone": 0.2, "concision": 0.2, "openness": 0.15 },
+        "ratingRules": [
+          "Frame lost if user complains or asks for justification.",
+          "Concision fails if user repeatedly exceeds 2 sentences.",
+          "Openness improves when user proposes a concrete low-pressure option."
+        ]
+      },
+      "debriefTemplate": {
+        "strengthsCount": 2,
+        "oneKeyImprovementRule": "Pick the single highest-impact fix (usually less explanation, more concrete option).",
+        "redoExercise": ["Refais en 8 mots.", "Refais plus chaleureux.", "Refais plus ferme (cadre)."],
+        "rewriteVariantsRules": [
+          "Provide 1 profiled rewrite matching user tone+register+limits.",
+          "Provide 1 redo prompt with a single constraint."
+        ]
+      }
+    }
+  }
+}

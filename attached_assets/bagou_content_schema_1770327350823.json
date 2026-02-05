@@ -1,0 +1,395 @@
+{
+  "meta": {
+    "product": "Bagou",
+    "version": "1.0",
+    "description": "Content schemas for Mother Cards (archetypes) and Roleplay Scenarios, used with SRS + profile-adapted generation."
+  },
+  "enums": {
+    "language": ["fr", "en", "es"],
+    "channel": ["text", "irl", "voice"],
+    "tone": ["classy_calm", "fun_teasing", "direct", "warm_empathetic", "minimalist"],
+    "riskLevel": ["safe", "medium", "bold"],
+    "difficulty": ["n1", "n2", "n3"],
+    "rating": ["hard", "medium", "easy"],
+    "intent": [
+      "open",
+      "small_talk",
+      "tease",
+      "invite",
+      "relaunch",
+      "escalate",
+      "set_boundary",
+      "reframe",
+      "negotiate",
+      "handle_criticism",
+      "repair",
+      "exit_gracefully",
+      "deescalate",
+      "assert_request"
+    ],
+    "constraintType": [
+      "max_words",
+      "max_sentences",
+      "must_include",
+      "must_avoid",
+      "style_rule",
+      "time_limit_seconds"
+    ]
+  },
+
+  "schemas": {
+    "MotherCard": {
+      "type": "object",
+      "required": [
+        "id",
+        "themeId",
+        "packId",
+        "subthemeId",
+        "language",
+        "channel",
+        "difficulty",
+        "intent",
+        "context",
+        "userGoal",
+        "constraints",
+        "tags",
+        "antiPatterns",
+        "generationHints"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique card archetype id, e.g., MC_REL_D5_000123"
+        },
+        "themeId": { "type": "string", "description": "Top-level theme id" },
+        "packId": { "type": "string", "description": "Pack id (group of archetypes)" },
+        "subthemeId": { "type": "string", "description": "Subtheme id (narrow category)" },
+
+        "language": { "type": "string", "enum": ["fr", "en", "es"] },
+        "channel": { "type": "string", "enum": ["text", "irl", "voice"] },
+        "difficulty": { "type": "string", "enum": ["n1", "n2", "n3"] },
+        "intent": { "type": "string", "description": "Main communication intent tag" },
+
+        "context": {
+          "type": "object",
+          "required": ["situation", "speakerRole", "otherRole", "relationship", "stakes"],
+          "properties": {
+            "situation": { "type": "string", "description": "1–2 lines of scenario context" },
+            "speakerRole": { "type": "string", "description": "Who the user is in this context" },
+            "otherRole": { "type": "string", "description": "Who the AI/other person is" },
+            "relationship": {
+              "type": "string",
+              "description": "e.g., coworker, friend, date, manager, vendor, neighbor"
+            },
+            "stakes": {
+              "type": "string",
+              "description": "What matters here: vibe, respect, money, time, boundaries..."
+            }
+          }
+        },
+
+        "userGoal": {
+          "type": "string",
+          "description": "What the user should accomplish in one response."
+        },
+
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "value"],
+            "properties": {
+              "type": { "type": "string", "enum": ["max_words", "max_sentences", "must_include", "must_avoid", "style_rule", "time_limit_seconds"] },
+              "value": {
+                "type": ["string", "number", "array"],
+                "description": "Depends on type: number for max_words/time, string/array for must_include/avoid."
+              }
+            }
+          }
+        },
+
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Search and clustering tags, e.g., late_reply, shit_test, refund, meeting"
+        },
+
+        "antiPatterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Common mistakes to avoid: over-explain, needy, passive_aggressive..."
+        },
+
+        "generationHints": {
+          "type": "object",
+          "required": ["targetVibe", "modelAnswerRules", "variantRules"],
+          "properties": {
+            "targetVibe": {
+              "type": "string",
+              "description": "Desired vibe: grounded, playful, respectful, firm..."
+            },
+            "modelAnswerRules": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Rules for the AI-generated model answer."
+            },
+            "variantRules": {
+              "type": "object",
+              "required": ["safe", "medium", "bold"],
+              "properties": {
+                "safe": { "type": "array", "items": { "type": "string" } },
+                "medium": { "type": "array", "items": { "type": "string" } },
+                "bold": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "Scenario": {
+      "type": "object",
+      "required": [
+        "id",
+        "themeId",
+        "packId",
+        "subthemeId",
+        "language",
+        "primaryChannel",
+        "title",
+        "setup",
+        "aiRole",
+        "userRole",
+        "targetSkills",
+        "difficulty",
+        "durationSecondsTarget",
+        "turnsTarget",
+        "arc",
+        "scoring",
+        "debriefTemplate"
+      ],
+      "properties": {
+        "id": { "type": "string", "description": "Unique scenario id, e.g., SC_REL_D5_000012" },
+        "themeId": { "type": "string" },
+        "packId": { "type": "string" },
+        "subthemeId": { "type": "string" },
+
+        "language": { "type": "string", "enum": ["fr", "en", "es"] },
+        "primaryChannel": { "type": "string", "enum": ["text", "irl", "voice"] },
+
+        "title": { "type": "string" },
+
+        "setup": {
+          "type": "object",
+          "required": ["context", "objective", "constraints", "startingMessage"],
+          "properties": {
+            "context": { "type": "string", "description": "Short narrative context" },
+            "objective": { "type": "string", "description": "What success looks like" },
+            "constraints": { "type": "array", "items": { "type": "string" } },
+            "startingMessage": { "type": "string", "description": "First message spoken/sent by AI role" }
+          }
+        },
+
+        "aiRole": {
+          "type": "object",
+          "required": ["name", "persona", "stance", "boundaries"],
+          "properties": {
+            "name": { "type": "string" },
+            "persona": { "type": "string", "description": "How AI should behave (e.g., slightly resistant, playful)" },
+            "stance": {
+              "type": "string",
+              "description": "Initial stance: neutral, cold, busy, defensive, friendly..."
+            },
+            "boundaries": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "What AI will not do (e.g., never insult, never be explicit)"
+            }
+          }
+        },
+
+        "userRole": {
+          "type": "object",
+          "required": ["name", "frame"],
+          "properties": {
+            "name": { "type": "string" },
+            "frame": { "type": "string", "description": "User frame to maintain: calm, firm, playful..." }
+          }
+        },
+
+        "targetSkills": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Skills emphasized, e.g., concision, boundary, invite, reframe, tone"
+        },
+
+        "difficulty": { "type": "string", "enum": ["n1", "n2", "n3"] },
+
+        "durationSecondsTarget": { "type": "number", "description": "Target duration (e.g., 300 seconds)" },
+        "turnsTarget": { "type": "object", "required": ["min", "max"], "properties": { "min": { "type": "number" }, "max": { "type": "number" } } },
+
+        "arc": {
+          "type": "object",
+          "required": ["phase1", "phase2", "phase3", "successEndings", "failureEndings"],
+          "properties": {
+            "phase1": { "type": "string", "description": "Opening: set context, mild friction" },
+            "phase2": { "type": "string", "description": "Resistance: tests, objections, ambiguity" },
+            "phase3": { "type": "string", "description": "Resolution: agreement, boundary, exit" },
+            "successEndings": { "type": "array", "items": { "type": "string" } },
+            "failureEndings": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+
+        "scoring": {
+          "type": "object",
+          "required": ["dimensions", "weights", "ratingRules"],
+          "properties": {
+            "dimensions": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "e.g., clarity, frame, tone, concision, openness"
+            },
+            "weights": {
+              "type": "object",
+              "additionalProperties": { "type": "number" },
+              "description": "Weights for each dimension (sum ~ 1.0)"
+            },
+            "ratingRules": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Interpretation rules for the coach debrief."
+            }
+          }
+        },
+
+        "debriefTemplate": {
+          "type": "object",
+          "required": ["strengthsCount", "oneKeyImprovement", "redoExercise", "rewriteVariants"],
+          "properties": {
+            "strengthsCount": { "type": "number", "description": "Typically 2" },
+            "oneKeyImprovement": { "type": "string", "description": "Single most important fix" },
+            "redoExercise": { "type": "array", "items": { "type": "string" }, "description": "Redo constraints suggestions" },
+            "rewriteVariants": {
+              "type": "object",
+              "required": ["profiled", "shorter", "warmer", "firmer"],
+              "properties": {
+                "profiled": { "type": "string" },
+                "shorter": { "type": "string" },
+                "warmer": { "type": "string" },
+                "firmer": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "examples": {
+    "motherCards": [
+      {
+        "id": "MC_REL_D5_000001",
+        "themeId": "RELATIONNEL",
+        "packId": "REL_D5_RELANCHES_TIMING",
+        "subthemeId": "REL_D5_LATE_REPLY_SEEN",
+        "language": "fr",
+        "channel": "text",
+        "difficulty": "n2",
+        "intent": "relaunch",
+        "context": {
+          "situation": "Elle a vu ton dernier message hier soir et n’a pas répondu. Tu veux relancer sans pression, en gardant une vibe légère.",
+          "speakerRole": "toi",
+          "otherRole": "elle",
+          "relationship": "date",
+          "stakes": "garder l’attraction sans paraître en demande"
+        },
+        "userGoal": "Relancer avec humour léger et ouvrir une option simple (question ou mini-invite).",
+        "constraints": [
+          { "type": "max_sentences", "value": 1 },
+          { "type": "max_words", "value": 12 },
+          { "type": "must_avoid", "value": ["pourquoi tu réponds pas", "??", "t'es fâchée", "je comprends pas"] },
+          { "type": "style_rule", "value": "Ton léger, pas de justification, pas de reproche." }
+        ],
+        "tags": ["seduction", "late_reply", "seen", "humor", "low_pressure"],
+        "antiPatterns": ["over_explain", "needy", "accusatory", "double_text_spam"],
+        "generationHints": {
+          "targetVibe": "léger, sûr de soi, souriant",
+          "modelAnswerRules": [
+            "One-liner.",
+            "Playful nudge + open loop.",
+            "No guilt, no complaint."
+          ],
+          "variantRules": {
+            "safe": ["Very gentle, neutral humor.", "Simple question."],
+            "medium": ["Playful tease + invitation option."],
+            "bold": ["Light challenge, confident frame, still respectful."]
+          }
+        }
+      }
+    ],
+    "scenarios": [
+      {
+        "id": "SC_REL_D5_000001",
+        "themeId": "RELATIONNEL",
+        "packId": "REL_D5_RELANCHES_TIMING",
+        "subthemeId": "REL_D5_LATE_REPLY_SEEN",
+        "language": "fr",
+        "primaryChannel": "text",
+        "title": "Vu hier — relance légère et invitation simple",
+        "setup": {
+          "context": "Vous avez échangé 2–3 jours, bon feeling. Elle a vu ton message hier et n’a pas répondu.",
+          "objective": "Relancer sans pression, garder le cadre, proposer un plan simple.",
+          "constraints": ["1–2 phrases max par réponse", "pas de reproche", "garder un ton léger"],
+          "startingMessage": "Oups j’ai disparu 😅 (elle répond enfin). Qu’est-ce que tu racontes ?"
+        },
+        "aiRole": {
+          "name": "Elle",
+          "persona": "Légère, un peu imprévisible. Elle teste si tu restes cool.",
+          "stance": "busy",
+          "boundaries": ["ne jamais insulter", "pas de sexualité explicite", "pas de manipulation"]
+        },
+        "userRole": {
+          "name": "Toi",
+          "frame": "Calme, joueur, pas en demande."
+        },
+        "targetSkills": ["concision", "frame", "openness", "invite", "tone"],
+        "difficulty": "n2",
+        "durationSecondsTarget": 300,
+        "turnsTarget": { "min": 6, "max": 10 },
+        "arc": {
+          "phase1": "Elle répond un peu tard, sympathique mais pas très investie. Tu relances sans t’expliquer.",
+          "phase2": "Elle donne des réponses courtes / floues. Elle teste ta réaction. Tu proposes un plan concret sans pression.",
+          "phase3": "Soit elle accepte une option, soit elle reste vague. Tu conclus proprement (cadre + porte ouverte).",
+          "successEndings": [
+            "Elle accepte un créneau ou propose un autre.",
+            "Elle reste vague mais tu clôtures avec élégance et une porte ouverte."
+          ],
+          "failureEndings": [
+            "Tu lui reproches / tu t’expliques trop / tu envoies 3 messages de suite.",
+            "Tu deviens passif-agressif ou demande de validation."
+          ]
+        },
+        "scoring": {
+          "dimensions": ["clarity", "frame", "tone", "concision", "openness"],
+          "weights": { "clarity": 0.2, "frame": 0.25, "tone": 0.2, "concision": 0.2, "openness": 0.15 },
+          "ratingRules": [
+            "Frame is lost if user asks for justification or complains.",
+            "Concision fails if >2 sentences repeatedly.",
+            "Openness improves if user proposes a specific low-pressure option."
+          ]
+        },
+        "debriefTemplate": {
+          "strengthsCount": 2,
+          "oneKeyImprovement": "Réduire l’explication et aller plus vite vers une option concrète.",
+          "redoExercise": ["Refais ta meilleure relance en 8 mots.", "Refais en version plus chaleureuse.", "Refais en version plus ferme (cadre)."],
+          "rewriteVariants": {
+            "profiled": "Je te laisse deux options : café 18h ou balade 19h, tu prends quoi ?",
+            "shorter": "Café cette semaine ?",
+            "warmer": "Je me suis dit à toi — café cette semaine ?",
+            "firmer": "Je propose jeudi ou samedi, sinon une autre fois 😉"
+          }
+        }
+      }
+    ]
+  }
+}
