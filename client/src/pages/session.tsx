@@ -67,8 +67,6 @@ export default function Session() {
   const [userAnswer, setUserAnswer] = useState("");
   const [hasRevealed, setHasRevealed] = useState(false);
   const [modelAnswer, setModelAnswer] = useState<ModelAnswer | null>(null);
-  const [needsRedo, setNeedsRedo] = useState(false);
-  const [redoAnswer, setRedoAnswer] = useState("");
   const [roleplayMessages, setRoleplayMessages] = useState<{ role: string; content: string }[]>([]);
   const [roleplayInput, setRoleplayInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
@@ -164,23 +162,12 @@ export default function Session() {
 
   const handleRating = (rating: "hard" | "medium" | "easy") => {
     if (!currentCard) return;
-    
-    if (modelAnswer?.feedback && !modelAnswer.feedback.pass && !needsRedo) {
-      setNeedsRedo(true);
-      return;
-    }
 
     submitRating.mutate({
       cardId: currentCard.card.cardId,
       rating,
-      userAnswer: needsRedo ? redoAnswer : userAnswer,
+      userAnswer,
     });
-  };
-
-  const handleRedo = () => {
-    if (!redoAnswer.trim()) return;
-    setNeedsRedo(false);
-    handleRating(modelAnswer?.feedback?.ratingSuggested as "hard" | "medium" | "easy" || "medium");
   };
 
   const moveToNextCard = () => {
@@ -196,8 +183,6 @@ export default function Session() {
     setUserAnswer("");
     setHasRevealed(false);
     setModelAnswer(null);
-    setNeedsRedo(false);
-    setRedoAnswer("");
   };
 
   const startRoleplay = () => {
@@ -259,10 +244,6 @@ export default function Session() {
                     modelAnswer={modelAnswer}
                     onReveal={handleReveal}
                     onRating={handleRating}
-                    needsRedo={needsRedo}
-                    redoAnswer={redoAnswer}
-                    setRedoAnswer={setRedoAnswer}
-                    onRedo={handleRedo}
                     isGenerating={generateModelAnswer.isPending}
                     isSubmitting={submitRating.isPending}
                     progress={progress}
@@ -401,10 +382,6 @@ function FlashcardView({
   modelAnswer,
   onReveal,
   onRating,
-  needsRedo,
-  redoAnswer,
-  setRedoAnswer,
-  onRedo,
   isGenerating,
   isSubmitting,
   progress,
@@ -519,36 +496,25 @@ function FlashcardView({
                 </Card>
               )}
 
-              {needsRedo && modelAnswer.feedback && (
+              {modelAnswer.feedback && !modelAnswer.feedback.pass && (
                 <Card className="border-orange-500/30 bg-orange-500/5">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base flex items-center gap-2">
                       <RotateCcw className="w-4 h-4 text-orange-500" />
-                      {t.session.redo}
+                      {t.session.feedback}
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-3">
+                  <CardContent>
                     <p className="text-sm text-muted-foreground">
-                      {t.session.redoPrompt} <strong>{modelAnswer.feedback.redoPrompt}</strong>
+                      {modelAnswer.feedback.oneFix}
                     </p>
-                    <Textarea
-                      value={redoAnswer}
-                      onChange={(e) => setRedoAnswer(e.target.value)}
-                      placeholder={t.session.typeHere}
-                      className="min-h-[80px] resize-none"
-                      data-testid="textarea-redo"
-                    />
-                    <Button onClick={onRedo} disabled={!redoAnswer.trim()} className="w-full" data-testid="button-redo-submit">
-                      {t.session.submit}
-                    </Button>
                   </CardContent>
                 </Card>
               )}
 
-              {!needsRedo && (
-                <div className="space-y-3">
-                  <p className="text-sm font-medium text-center">{t.session.howWasIt}</p>
-                  <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-center">{t.session.howWasIt}</p>
+                <div className="grid grid-cols-3 gap-3">
                     <Button
                       variant="outline"
                       onClick={() => onRating("hard")}
@@ -581,7 +547,6 @@ function FlashcardView({
                     </Button>
                   </div>
                 </div>
-              )}
             </>
           )}
         </div>
