@@ -122,6 +122,8 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
   app.get("/api/flashcards/due/:profileId", async (req, res) => {
     try {
       const profileId = parseInt(req.params.profileId);
+      const themeId = req.query.themeId as string | undefined;
+      const subthemeId = req.query.subthemeId as string | undefined;
       const today = new Date().toISOString().split("T")[0];
 
       const profile = await storage.getProfile(profileId);
@@ -131,8 +133,32 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
 
       const dueStates = await storage.getDueCards(profileId, today);
 
-      if (dueStates.length === 0) {
-        const allCards = await storage.getAllMotherCards(profile.language);
+      let filteredDueStates = dueStates;
+      if (themeId || subthemeId) {
+        const cardIds = dueStates.map(s => s.cardId);
+        const dueCards = [];
+        for (const cid of cardIds) {
+          const c = await storage.getMotherCard(cid);
+          if (c) dueCards.push(c);
+        }
+        const filtered = dueCards.filter(c => {
+          if (themeId && c.themeId !== themeId) return false;
+          if (subthemeId && c.subthemeId !== subthemeId) return false;
+          return true;
+        });
+        const filteredIds = new Set(filtered.map(c => c.cardId));
+        filteredDueStates = dueStates.filter(s => filteredIds.has(s.cardId));
+      }
+
+      if (filteredDueStates.length === 0) {
+        let allCards;
+        if (themeId && subthemeId) {
+          allCards = await storage.getMotherCardsBySubtheme(themeId, subthemeId, profile.language);
+        } else if (themeId) {
+          allCards = await storage.getMotherCardsByTheme(themeId, profile.language);
+        } else {
+          allCards = await storage.getAllMotherCards(profile.language);
+        }
         const existingStates = await storage.getAllSrsStates(profileId);
         const existingCardIds = new Set(existingStates.map(s => s.cardId));
         const newCards = allCards.filter(c => !existingCardIds.has(c.cardId));
@@ -147,7 +173,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       }
 
       const results = [];
-      for (const state of dueStates.slice(0, 15)) {
+      for (const state of filteredDueStates.slice(0, 15)) {
         const card = await storage.getMotherCard(state.cardId);
         if (card) {
           results.push({ card, srsState: state });
@@ -449,6 +475,21 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
+  app.post("/api/seed-cards", async (req, res) => {
+    try {
+      const { generateAllCards } = await import("./seed-cards");
+      res.json({ started: true, message: "Card generation started in background" });
+      generateAllCards(storage, (progress) => {
+        console.log(`[seed] ${progress.completedSubthemes}/${progress.totalSubthemes} subthemes | ${progress.currentTheme}/${progress.currentSubtheme} | ${progress.totalCardsGenerated} cards`);
+      }).then(result => {
+        console.log(`[seed] COMPLETE: ${result.totalCardsGenerated} cards generated, ${result.skippedSubthemes} skipped, ${result.errors.length} errors`);
+      }).catch(err => console.error("[seed] ERROR:", err));
+    } catch (error) {
+      console.error("Error starting card generation:", error);
+      res.status(500).json({ error: "Failed to start card generation" });
+    }
+  });
+
   app.post("/api/admin/generate-cards", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user?.claims?.sub;
@@ -465,7 +506,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       res.json({ started: true, message: "Card generation started", themes: THEMES_CONFIG.map(t => ({ id: t.id, label: t.label, subthemes: t.subthemes.length })) });
 
       generateAllCards(storage, (progress) => {
-        console.log(`[seed] ${progress.currentTheme}/${progress.currentSubtheme}: ${progress.cardsGenerated}/${progress.totalCards}`);
+        console.log(`[seed] ${progress.currentTheme}/${progress.currentSubtheme}: ${progress.totalCardsGenerated} generated, ${progress.completedSubthemes}/${progress.totalSubthemes} subthemes`);
       }).catch(err => console.error("Card generation error:", err));
     } catch (error) {
       console.error("Error starting card generation:", error);
@@ -487,11 +528,25 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       const { themeId, subthemeId, forceRegenerate } = req.body;
       const { generateSubthemeCards } = await import("./seed-cards");
 
-      const cards = await generateSubthemeCards(storage, themeId, subthemeId, forceRegenerate);
-      res.json({ success: true, cardsGenerated: cards.length });
+      const result = await generateSubthemeCards(storage, themeId, subthemeId, forceRegenerate);
+      res.json({ success: true, cardsGenerated: result.generated, skipped: result.skipped });
     } catch (error) {
       console.error("Error generating subtheme cards:", error);
       res.status(500).json({ error: "Failed to generate cards" });
+    }
+  });
+
+  app.get("/api/themes", async (req, res) => {
+    try {
+      const { THEMES_CONFIG } = await import("./seed-cards");
+      res.json(THEMES_CONFIG.map(t => ({
+        id: t.id,
+        label: t.label,
+        subthemes: t.subthemes.map(s => ({ id: s.id, label: s.label })),
+      })));
+    } catch (error) {
+      console.error("Error fetching themes:", error);
+      res.status(500).json({ error: "Failed to fetch themes" });
     }
   });
 

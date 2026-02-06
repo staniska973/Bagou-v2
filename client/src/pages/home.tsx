@@ -1,18 +1,23 @@
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { motion } from "framer-motion";
-import { 
-  Flame, 
-  Target, 
-  Trophy, 
-  ChevronRight, 
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Flame,
+  Target,
+  Trophy,
+  ChevronRight,
+  ChevronDown,
   TrendingUp,
   Brain,
   MessageSquare,
   LogOut,
-  User as UserIcon
+  User as UserIcon,
+  Sparkles,
+  Play,
+  Settings,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -24,11 +29,45 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import bagouIcon from "../assets/images/bagou-icon.png";
 
+interface ThemeData {
+  id: string;
+  label: string;
+  subthemes: { id: string; label: string }[];
+}
+
+interface Stats {
+  dueCards: number;
+  masteredCards: number;
+  totalCards: number;
+  totalSessions: number;
+  weakPoints: { tag: string; count: number }[];
+  themeProgress: { themeId: string; total: number; mastered: number; due: number }[];
+}
+
+const THEME_ICONS: Record<string, typeof Brain> = {
+  SOCIAL: MessageSquare,
+  PRO: Target,
+  DAILY: Sparkles,
+  RELATIONNEL: Flame,
+  DIFFICULT: TrendingUp,
+  STORY: Brain,
+};
+
+const THEME_COLORS: Record<string, string> = {
+  SOCIAL: "text-blue-500 bg-blue-500/10",
+  PRO: "text-amber-500 bg-amber-500/10",
+  DAILY: "text-green-500 bg-green-500/10",
+  RELATIONNEL: "text-pink-500 bg-pink-500/10",
+  DIFFICULT: "text-red-500 bg-red-500/10",
+  STORY: "text-purple-500 bg-purple-500/10",
+};
+
 export default function Home() {
   const [, navigate] = useLocation();
   const { language } = useAppStore();
   const { user, logout } = useAuth();
   const t = getTranslations(language);
+  const [expandedTheme, setExpandedTheme] = useState<string | null>(null);
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["/api/profiles/user", user?.id],
@@ -42,29 +81,38 @@ export default function Home() {
     enabled: !!user?.id,
   });
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats } = useQuery<Stats>({
     queryKey: ["/api/stats", profile?.id],
     enabled: !!profile?.id,
   });
 
+  const { data: themes } = useQuery<ThemeData[]>({
+    queryKey: ["/api/themes"],
+  });
+
   const startSession = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (params?: { themeId?: string; subthemeId?: string }) => {
       const res = await apiRequest("POST", "/api/sessions", { profileId: profile.id });
-      return res.json();
+      const session = await res.json();
+      return { session, ...params };
     },
-    onSuccess: (session) => {
+    onSuccess: ({ session, themeId, subthemeId }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
-      navigate(`/session?sessionId=${session.id}&profileId=${profile.id}`);
+      let url = `/session?sessionId=${session.id}&profileId=${profile.id}`;
+      if (themeId) url += `&themeId=${themeId}`;
+      if (subthemeId) url += `&subthemeId=${subthemeId}`;
+      navigate(url);
     },
   });
 
-  if (profileLoading) {
-    return <HomeSkeleton />;
-  }
+  useEffect(() => {
+    if (!profileLoading && !profile) {
+      navigate("/onboarding");
+    }
+  }, [profileLoading, profile, navigate]);
 
-  if (!profile) {
-    navigate("/onboarding");
-    return null;
+  if (profileLoading || !profile) {
+    return <HomeSkeleton />;
   }
 
   const streak = profile?.streak || 0;
@@ -72,69 +120,74 @@ export default function Home() {
   const masteredCards = stats?.masteredCards || 0;
   const totalCards = stats?.totalCards || 0;
 
+  const getThemeProgress = (themeId: string) => {
+    const tp = stats?.themeProgress?.find(t => t.themeId === themeId);
+    return tp || { total: 0, mastered: 0, due: 0 };
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 p-6">
-      <div className="max-w-lg mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-8"
-        >
-          <div className="flex items-center justify-between gap-3 mb-2">
-            <div className="flex items-center gap-3">
-              <img src={bagouIcon} alt="Bagou" className="w-10 h-10 object-contain" data-testid="img-home-logo" />
-              <div>
-                <p className="text-muted-foreground text-sm" data-testid="text-welcome">{t.home.welcomeBack}{user?.firstName ? `, ${user.firstName}` : ""}</p>
-                <h1 className="text-xl font-bold" data-testid="text-ready">{t.home.readyToTrain}</h1>
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
+      <div className="sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b px-4 py-2">
+        <div className="max-w-lg mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <img src={bagouIcon} alt="Bagou" className="w-8 h-8 object-contain" data-testid="img-home-logo" />
+            <div>
+              <p className="text-xs text-muted-foreground" data-testid="text-welcome">
+                {t.home.welcomeBack}{user?.firstName ? ` ${user.firstName}` : ""}
+              </p>
+              <div className="flex items-center gap-2">
+                <Flame className="w-3.5 h-3.5 text-orange-500" />
+                <span className="text-sm font-bold">{streak}</span>
+                <span className="text-xs text-muted-foreground">{t.home.days}</span>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Avatar className="w-8 h-8">
-                <AvatarImage src={user?.profileImageUrl || undefined} />
-                <AvatarFallback>
-                  <UserIcon className="w-4 h-4" />
-                </AvatarFallback>
-              </Avatar>
-              <Button variant="ghost" size="icon" onClick={() => logout()} data-testid="button-logout">
-                <LogOut className="w-4 h-4" />
-              </Button>
             </div>
           </div>
-        </motion.div>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" onClick={() => navigate("/stats")} data-testid="button-stats">
+              <TrendingUp className="w-4 h-4" />
+            </Button>
+            <Avatar className="w-7 h-7 cursor-pointer" onClick={() => navigate("/stats")}>
+              <AvatarImage src={user?.profileImageUrl || undefined} />
+              <AvatarFallback>
+                <UserIcon className="w-3.5 h-3.5" />
+              </AvatarFallback>
+            </Avatar>
+            <Button variant="ghost" size="icon" onClick={() => logout()} data-testid="button-logout">
+              <LogOut className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
 
+      <div className="max-w-lg mx-auto p-4 space-y-4">
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.1 }}
-          className="mb-6"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
         >
-          <Card className="bg-gradient-to-br from-primary to-primary/80 text-primary-foreground border-0 relative">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
-            <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/5 rounded-full translate-y-1/2 -translate-x-1/2" />
-            <CardContent className="p-6 relative">
-              <div className="flex items-center justify-between gap-4 mb-4">
-                <div className="flex items-center gap-2">
-                  <Flame className="w-6 h-6" />
-                  <span className="text-3xl font-bold">{streak}</span>
-                  <span className="text-sm opacity-90">{t.home.days}</span>
+          <Card className="bg-gradient-to-br from-primary to-primary/80 text-primary-foreground border-0 relative overflow-visible">
+            <CardContent className="p-4 relative">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <p className="text-sm opacity-80">Session personnalisee</p>
+                  <p className="text-xs opacity-60">Cartes a revoir selon votre progression</p>
                 </div>
-                <Badge variant="secondary" className="bg-white/20 text-white border-0">
-                  {t.home.streak}
-                </Badge>
+                <div className="flex items-center gap-1 bg-white/20 rounded-full px-2 py-1">
+                  <Target className="w-3.5 h-3.5" />
+                  <span className="text-sm font-bold">{dueCards}</span>
+                </div>
               </div>
               <Button
-                onClick={() => startSession.mutate()}
+                onClick={() => startSession.mutate({})}
                 disabled={startSession.isPending}
                 className="w-full bg-white text-primary font-semibold"
-                size="lg"
                 data-testid="button-start-session"
               >
                 {startSession.isPending ? (
                   t.common.loading
                 ) : (
                   <>
-                    {t.home.startSession}
-                    <ChevronRight className="w-5 h-5 ml-2" />
+                    <Play className="w-4 h-4 mr-2" />
+                    Commencer
                   </>
                 )}
               </Button>
@@ -142,108 +195,122 @@ export default function Home() {
           </Card>
         </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="grid grid-cols-3 gap-3 mb-6"
-        >
-          <StatCard
-            icon={Target}
-            label={t.home.dueCards}
-            value={dueCards}
-            color="text-orange-500"
-            bgColor="bg-orange-500/10"
-          />
-          <StatCard
-            icon={Trophy}
-            label={t.home.masteredCards}
-            value={masteredCards}
-            color="text-green-500"
-            bgColor="bg-green-500/10"
-          />
-          <StatCard
-            icon={Brain}
-            label="Total"
-            value={totalCards}
-            color="text-primary"
-            bgColor="bg-primary/10"
-          />
-        </motion.div>
+        <div className="grid grid-cols-3 gap-2">
+          <MiniStat label="A revoir" value={dueCards} color="text-orange-500" />
+          <MiniStat label="Maitrisees" value={masteredCards} color="text-green-500" />
+          <MiniStat label="Total" value={totalCards} color="text-primary" />
+        </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="grid grid-cols-2 gap-3"
-        >
-          <Card className="hover-elevate cursor-pointer" onClick={() => navigate("/session?mode=flashcards")} data-testid="card-flashcards">
-            <CardContent className="p-4 flex flex-col items-center gap-2 text-center">
-              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                <Brain className="w-5 h-5 text-primary" />
-              </div>
-              <p className="font-medium text-sm">{t.session.flashcards}</p>
-              <Badge variant="secondary" className="text-xs">{dueCards} {t.home.dueCards.toLowerCase()}</Badge>
-            </CardContent>
-          </Card>
-          <Card className="hover-elevate cursor-pointer" onClick={() => navigate("/roleplay")} data-testid="card-roleplay">
-            <CardContent className="p-4 flex flex-col items-center gap-2 text-center">
-              <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center">
-                <MessageSquare className="w-5 h-5 text-accent" />
-              </div>
-              <p className="font-medium text-sm">{t.session.roleplay}</p>
-              <Badge variant="secondary" className="text-xs">Explorer</Badge>
-            </CardContent>
-          </Card>
-        </motion.div>
+        <div>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <h2 className="text-sm font-semibold">Themes</h2>
+            <Button variant="ghost" size="sm" onClick={() => navigate("/roleplay")} className="text-xs" data-testid="button-roleplay">
+              <MessageSquare className="w-3.5 h-3.5 mr-1" />
+              Roleplay
+            </Button>
+          </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-          className="mt-6"
-        >
-          <Card className="hover-elevate cursor-pointer" onClick={() => navigate("/stats")} data-testid="card-view-stats">
-            <CardContent className="p-4 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-chart-2/10 flex items-center justify-center">
-                  <TrendingUp className="w-5 h-5 text-chart-2" />
-                </div>
-                <div>
-                  <p className="font-medium">{t.stats.title}</p>
-                  <p className="text-sm text-muted-foreground">{t.stats.overview}</p>
-                </div>
-              </div>
-              <ChevronRight className="w-5 h-5 text-muted-foreground" />
-            </CardContent>
-          </Card>
-        </motion.div>
+          <div className="space-y-2">
+            {themes?.map((theme) => {
+              const Icon = THEME_ICONS[theme.id] || Brain;
+              const colors = THEME_COLORS[theme.id] || "text-primary bg-primary/10";
+              const [textColor, bgColor] = colors.split(" ");
+              const progress = getThemeProgress(theme.id);
+              const isExpanded = expandedTheme === theme.id;
+              const totalSubthemeCards = theme.subthemes.length * 50;
+
+              return (
+                <motion.div key={theme.id} layout>
+                  <Card
+                    className="cursor-pointer hover-elevate"
+                    onClick={() => setExpandedTheme(isExpanded ? null : theme.id)}
+                    data-testid={`card-theme-${theme.id}`}
+                  >
+                    <CardContent className="p-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-md ${bgColor} flex items-center justify-center flex-shrink-0`}>
+                          <Icon className={`w-4.5 h-4.5 ${textColor}`} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-medium text-sm">{theme.label}</p>
+                            <div className="flex items-center gap-2">
+                              {progress.due > 0 && (
+                                <Badge variant="secondary" className="text-xs">{progress.due}</Badge>
+                              )}
+                              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1">
+                            <Progress value={totalSubthemeCards > 0 ? (progress.mastered / totalSubthemeCards) * 100 : 0} className="h-1 flex-1" />
+                            <span className="text-xs text-muted-foreground">{progress.mastered}/{totalSubthemeCards}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <AnimatePresence>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="pl-4 pr-1 py-2 space-y-1">
+                          {theme.subthemes.map((sub) => (
+                            <div
+                              key={sub.id}
+                              className="flex items-center justify-between gap-2 py-2 px-3 rounded-md hover-elevate cursor-pointer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startSession.mutate({ themeId: theme.id, subthemeId: sub.id });
+                              }}
+                              data-testid={`btn-subtheme-${theme.id}-${sub.id}`}
+                            >
+                              <span className="text-sm">{sub.label}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">50 cartes</span>
+                                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                              </div>
+                            </div>
+                          ))}
+
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="w-full text-xs mt-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startSession.mutate({ themeId: theme.id });
+                            }}
+                            data-testid={`button-start-theme-${theme.id}`}
+                          >
+                            <Play className="w-3 h-3 mr-1" />
+                            Tout le theme
+                          </Button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  color,
-  bgColor,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: number;
-  color: string;
-  bgColor: string;
-}) {
+function MiniStat({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <Card>
-      <CardContent className="p-3 text-center">
-        <div className={`w-8 h-8 rounded-full ${bgColor} flex items-center justify-center mx-auto mb-2`}>
-          <Icon className={`w-4 h-4 ${color}`} />
-        </div>
-        <p className="text-xl font-bold">{value}</p>
-        <p className="text-xs text-muted-foreground">{label}</p>
+      <CardContent className="p-2 text-center">
+        <p className={`text-lg font-bold ${color}`}>{value}</p>
+        <p className="text-[10px] text-muted-foreground">{label}</p>
       </CardContent>
     </Card>
   );
@@ -251,25 +318,18 @@ function StatCard({
 
 function HomeSkeleton() {
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-lg mx-auto space-y-6">
-        <div className="flex items-center gap-3">
-          <Skeleton className="w-12 h-12 rounded-full" />
-          <div className="space-y-2">
-            <Skeleton className="w-24 h-4" />
-            <Skeleton className="w-48 h-6" />
-          </div>
+    <div className="min-h-screen bg-background p-4">
+      <div className="max-w-lg mx-auto space-y-4">
+        <Skeleton className="w-full h-12" />
+        <Skeleton className="w-full h-28 rounded-lg" />
+        <div className="grid grid-cols-3 gap-2">
+          <Skeleton className="h-16 rounded-lg" />
+          <Skeleton className="h-16 rounded-lg" />
+          <Skeleton className="h-16 rounded-lg" />
         </div>
-        <Skeleton className="w-full h-40 rounded-lg" />
-        <div className="grid grid-cols-3 gap-3">
-          <Skeleton className="h-24 rounded-lg" />
-          <Skeleton className="h-24 rounded-lg" />
-          <Skeleton className="h-24 rounded-lg" />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Skeleton className="h-28 rounded-lg" />
-          <Skeleton className="h-28 rounded-lg" />
-        </div>
+        {[1, 2, 3].map(i => (
+          <Skeleton key={i} className="h-16 rounded-lg" />
+        ))}
       </div>
     </div>
   );

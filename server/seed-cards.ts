@@ -534,7 +534,8 @@ export async function generateSubthemeCards(
 
   const existing = await storage.getMotherCardsBySubtheme(themeId, subthemeId, "fr");
 
-  if (existing.length >= CARDS_PER_SUBTHEME && !forceRegenerate) {
+  const skipThreshold = Math.floor(CARDS_PER_SUBTHEME * 0.9);
+  if (existing.length >= skipThreshold && !forceRegenerate) {
     console.log(`[SeedCards] Skipping ${themeId}/${subthemeId} - already has ${existing.length} cards`);
     return { generated: 0, skipped: true };
   }

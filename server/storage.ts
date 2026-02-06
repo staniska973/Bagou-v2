@@ -137,7 +137,7 @@ class DatabaseStorage implements IStorage {
 
   async createMotherCards(data: InsertMotherCard[]): Promise<MotherCard[]> {
     if (data.length === 0) return [];
-    return db.insert(motherCards).values(data).returning();
+    return db.insert(motherCards).values(data).onConflictDoNothing({ target: motherCards.cardId }).returning();
   }
 
   async deleteMotherCard(cardId: string): Promise<void> {
