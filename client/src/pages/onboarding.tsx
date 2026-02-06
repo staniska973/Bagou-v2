@@ -10,7 +10,9 @@ import { Label } from "@/components/ui/label";
 import { useAppStore } from "@/lib/store";
 import { getTranslations } from "@/lib/i18n";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/use-auth";
+import bagouIcon from "../assets/images/bagou-icon.png";
 
 const TOTAL_STEPS = 6;
 
@@ -31,7 +33,8 @@ interface OnboardingData {
 
 export default function Onboarding() {
   const [, navigate] = useLocation();
-  const { language, setProfileId, setHasCompletedOnboarding } = useAppStore();
+  const { language } = useAppStore();
+  const { user } = useAuth();
   const t = getTranslations(language);
   const [step, setStep] = useState(1);
   const [data, setData] = useState<OnboardingData>({
@@ -49,23 +52,25 @@ export default function Onboarding() {
 
   const createProfile = useMutation({
     mutationFn: async (profileData: OnboardingData) => {
-      const res = await apiRequest("POST", "/api/profiles", profileData);
+      const res = await apiRequest("POST", "/api/profiles", {
+        ...profileData,
+        userId: user?.id,
+      });
       return res.json();
     },
-    onSuccess: (profile) => {
-      setProfileId(profile.id);
-      setHasCompletedOnboarding(true);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/profiles/user"] });
       navigate("/");
     },
   });
 
-  const objectives: { key: ObjectiveKey; icon: string }[] = [
-    { key: "SOCIAL", icon: "👥" },
-    { key: "PRO", icon: "💼" },
-    { key: "DAILY", icon: "🏠" },
-    { key: "RELATIONNEL", icon: "❤️" },
-    { key: "DIFFICULT", icon: "⚡" },
-    { key: "STORY", icon: "🎭" },
+  const objectives: { key: ObjectiveKey; label: string }[] = [
+    { key: "SOCIAL", label: "Social" },
+    { key: "PRO", label: "Pro" },
+    { key: "DAILY", label: "Quotidien" },
+    { key: "RELATIONNEL", label: "Relationnel" },
+    { key: "DIFFICULT", label: "Difficile" },
+    { key: "STORY", label: "Storytelling" },
   ];
 
   const tones = ["classy_calm", "fun_teasing", "direct", "warm_empathetic", "minimalist"] as const;
@@ -105,6 +110,7 @@ export default function Onboarding() {
             animate={{ opacity: 1, y: 0 }}
             className="text-center mb-8"
           >
+            <img src={bagouIcon} alt="Bagou" className="w-12 h-12 object-contain mx-auto mb-3" data-testid="img-onboarding-logo" />
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary mb-4">
               <Sparkles className="w-4 h-4" />
               <span className="text-sm font-medium">{t.onboarding.step} {step} {t.onboarding.of} {TOTAL_STEPS}</span>
@@ -154,7 +160,7 @@ export default function Onboarding() {
                 <StepContainer title={t.onboarding.objectives.title} description={t.onboarding.objectives.description}>
                   <div className="grid grid-cols-2 gap-3">
                     {objectives.map((obj) => {
-                      const label = t.onboarding.objectives[obj.key.toLowerCase() as keyof typeof t.onboarding.objectives] || obj.key;
+                      const label = t.onboarding.objectives[obj.key.toLowerCase() as keyof typeof t.onboarding.objectives] || obj.label;
                       const desc = t.onboarding.objectives[`${obj.key.toLowerCase()}Desc` as keyof typeof t.onboarding.objectives] || "";
                       return (
                         <Card
@@ -169,7 +175,6 @@ export default function Onboarding() {
                         >
                           <CardContent className="p-4">
                             <div className="flex items-start gap-3">
-                              <span className="text-2xl">{obj.icon}</span>
                               <div className="flex-1 min-w-0">
                                 <p className="font-medium text-sm">{label}</p>
                                 <p className="text-xs text-muted-foreground truncate">{desc}</p>

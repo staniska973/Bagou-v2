@@ -4,7 +4,7 @@ import {
   motherCards,
   srsStates,
   scenarios,
-  sessions,
+  trainingSessions,
   sessionEvents,
   type UserProfile,
   type InsertUserProfile,
@@ -14,63 +14,69 @@ import {
   type InsertSrsState,
   type Scenario,
   type InsertScenario,
-  type Session,
-  type InsertSession,
+  type TrainingSession,
+  type InsertTrainingSession,
   type SessionEvent,
   type InsertSessionEvent,
 } from "@shared/schema";
-import { eq, and, lte, sql, desc, asc } from "drizzle-orm";
+import { eq, and, lte, sql, desc, asc, gte } from "drizzle-orm";
 
 export interface IStorage {
-  // Profiles
   getProfile(id: number): Promise<UserProfile | undefined>;
+  getProfileByUserId(userId: string): Promise<UserProfile | undefined>;
   createProfile(data: InsertUserProfile): Promise<UserProfile>;
   updateProfile(id: number, data: Partial<InsertUserProfile>): Promise<UserProfile | undefined>;
 
-  // Mother Cards
   getMotherCard(cardId: string): Promise<MotherCard | undefined>;
   getMotherCardsByPack(packId: string): Promise<MotherCard[]>;
   getMotherCardsByTheme(themeId: string, language: string): Promise<MotherCard[]>;
+  getMotherCardsBySubtheme(themeId: string, subthemeId: string, language: string): Promise<MotherCard[]>;
   getAllMotherCards(language: string): Promise<MotherCard[]>;
+  getMotherCardCount(): Promise<number>;
   createMotherCard(data: InsertMotherCard): Promise<MotherCard>;
   createMotherCards(data: InsertMotherCard[]): Promise<MotherCard[]>;
+  deleteMotherCard(cardId: string): Promise<void>;
+  deleteMotherCardsBySubtheme(themeId: string, subthemeId: string): Promise<void>;
 
-  // SRS States
   getSrsState(profileId: number, cardId: string): Promise<SrsState | undefined>;
   getDueCards(profileId: number, date: string): Promise<SrsState[]>;
+  getAllSrsStates(profileId: number): Promise<SrsState[]>;
   createSrsState(data: InsertSrsState): Promise<SrsState>;
   updateSrsState(id: number, data: Partial<InsertSrsState>): Promise<SrsState | undefined>;
   getOrCreateSrsState(profileId: number, cardId: string): Promise<SrsState>;
 
-  // Scenarios
   getScenario(scenarioId: string): Promise<Scenario | undefined>;
   getScenariosByTheme(themeId: string, language: string): Promise<Scenario[]>;
+  getAllScenarios(language: string): Promise<Scenario[]>;
   getRandomScenario(language: string, linkedCardIds?: string[]): Promise<Scenario | undefined>;
   createScenario(data: InsertScenario): Promise<Scenario>;
 
-  // Sessions
-  getSession(id: number): Promise<Session | undefined>;
-  getSessionsByProfile(profileId: number): Promise<Session[]>;
-  createSession(data: InsertSession): Promise<Session>;
-  updateSession(id: number, data: Partial<InsertSession>): Promise<Session | undefined>;
+  getSession(id: number): Promise<TrainingSession | undefined>;
+  getSessionsByProfile(profileId: number): Promise<TrainingSession[]>;
+  createSession(data: InsertTrainingSession): Promise<TrainingSession>;
+  updateSession(id: number, data: Partial<InsertTrainingSession>): Promise<TrainingSession | undefined>;
 
-  // Session Events
   createSessionEvent(data: InsertSessionEvent): Promise<SessionEvent>;
   getSessionEvents(sessionId: number): Promise<SessionEvent[]>;
 
-  // Stats
   getStats(profileId: number): Promise<{
     dueCards: number;
     masteredCards: number;
+    totalCards: number;
     totalSessions: number;
     weakPoints: { tag: string; count: number }[];
+    themeProgress: { themeId: string; total: number; mastered: number; due: number }[];
   }>;
 }
 
 class DatabaseStorage implements IStorage {
-  // Profiles
   async getProfile(id: number): Promise<UserProfile | undefined> {
     const [profile] = await db.select().from(userProfiles).where(eq(userProfiles.id, id));
+    return profile;
+  }
+
+  async getProfileByUserId(userId: string): Promise<UserProfile | undefined> {
+    const [profile] = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId));
     return profile;
   }
 
@@ -88,7 +94,6 @@ class DatabaseStorage implements IStorage {
     return profile;
   }
 
-  // Mother Cards
   async getMotherCard(cardId: string): Promise<MotherCard | undefined> {
     const [card] = await db.select().from(motherCards).where(eq(motherCards.cardId, cardId));
     return card;
@@ -105,8 +110,24 @@ class DatabaseStorage implements IStorage {
       .where(and(eq(motherCards.themeId, themeId), eq(motherCards.language, language)));
   }
 
+  async getMotherCardsBySubtheme(themeId: string, subthemeId: string, language: string): Promise<MotherCard[]> {
+    return db
+      .select()
+      .from(motherCards)
+      .where(and(
+        eq(motherCards.themeId, themeId),
+        eq(motherCards.subthemeId, subthemeId),
+        eq(motherCards.language, language)
+      ));
+  }
+
   async getAllMotherCards(language: string): Promise<MotherCard[]> {
     return db.select().from(motherCards).where(eq(motherCards.language, language));
+  }
+
+  async getMotherCardCount(): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)` }).from(motherCards);
+    return Number(result[0].count);
   }
 
   async createMotherCard(data: InsertMotherCard): Promise<MotherCard> {
@@ -119,7 +140,16 @@ class DatabaseStorage implements IStorage {
     return db.insert(motherCards).values(data).returning();
   }
 
-  // SRS States
+  async deleteMotherCard(cardId: string): Promise<void> {
+    await db.delete(motherCards).where(eq(motherCards.cardId, cardId));
+  }
+
+  async deleteMotherCardsBySubtheme(themeId: string, subthemeId: string): Promise<void> {
+    await db.delete(motherCards).where(
+      and(eq(motherCards.themeId, themeId), eq(motherCards.subthemeId, subthemeId))
+    );
+  }
+
   async getSrsState(profileId: number, cardId: string): Promise<SrsState | undefined> {
     const [state] = await db
       .select()
@@ -134,6 +164,10 @@ class DatabaseStorage implements IStorage {
       .from(srsStates)
       .where(and(eq(srsStates.profileId, profileId), lte(srsStates.dueDate, date)))
       .orderBy(asc(srsStates.dueDate));
+  }
+
+  async getAllSrsStates(profileId: number): Promise<SrsState[]> {
+    return db.select().from(srsStates).where(eq(srsStates.profileId, profileId));
   }
 
   async createSrsState(data: InsertSrsState): Promise<SrsState> {
@@ -169,7 +203,6 @@ class DatabaseStorage implements IStorage {
     return state;
   }
 
-  // Scenarios
   async getScenario(scenarioId: string): Promise<Scenario | undefined> {
     const [scenario] = await db.select().from(scenarios).where(eq(scenarios.scenarioId, scenarioId));
     return scenario;
@@ -182,10 +215,14 @@ class DatabaseStorage implements IStorage {
       .where(and(eq(scenarios.themeId, themeId), eq(scenarios.language, language)));
   }
 
+  async getAllScenarios(language: string): Promise<Scenario[]> {
+    return db.select().from(scenarios).where(eq(scenarios.language, language));
+  }
+
   async getRandomScenario(language: string, linkedCardIds?: string[]): Promise<Scenario | undefined> {
     const allScenarios = await db.select().from(scenarios).where(eq(scenarios.language, language));
     if (allScenarios.length === 0) return undefined;
-    
+
     if (linkedCardIds && linkedCardIds.length > 0) {
       const linked = allScenarios.filter((s) =>
         s.linkedCardIds?.some((id) => linkedCardIds.includes(id))
@@ -194,7 +231,7 @@ class DatabaseStorage implements IStorage {
         return linked[Math.floor(Math.random() * linked.length)];
       }
     }
-    
+
     return allScenarios[Math.floor(Math.random() * allScenarios.length)];
   }
 
@@ -203,31 +240,29 @@ class DatabaseStorage implements IStorage {
     return scenario;
   }
 
-  // Sessions
-  async getSession(id: number): Promise<Session | undefined> {
-    const [session] = await db.select().from(sessions).where(eq(sessions.id, id));
+  async getSession(id: number): Promise<TrainingSession | undefined> {
+    const [session] = await db.select().from(trainingSessions).where(eq(trainingSessions.id, id));
     return session;
   }
 
-  async getSessionsByProfile(profileId: number): Promise<Session[]> {
+  async getSessionsByProfile(profileId: number): Promise<TrainingSession[]> {
     return db
       .select()
-      .from(sessions)
-      .where(eq(sessions.profileId, profileId))
-      .orderBy(desc(sessions.createdAt));
+      .from(trainingSessions)
+      .where(eq(trainingSessions.profileId, profileId))
+      .orderBy(desc(trainingSessions.createdAt));
   }
 
-  async createSession(data: InsertSession): Promise<Session> {
-    const [session] = await db.insert(sessions).values(data).returning();
+  async createSession(data: InsertTrainingSession): Promise<TrainingSession> {
+    const [session] = await db.insert(trainingSessions).values(data).returning();
     return session;
   }
 
-  async updateSession(id: number, data: Partial<InsertSession>): Promise<Session | undefined> {
-    const [session] = await db.update(sessions).set(data).where(eq(sessions.id, id)).returning();
+  async updateSession(id: number, data: Partial<InsertTrainingSession>): Promise<TrainingSession | undefined> {
+    const [session] = await db.update(trainingSessions).set(data).where(eq(trainingSessions.id, id)).returning();
     return session;
   }
 
-  // Session Events
   async createSessionEvent(data: InsertSessionEvent): Promise<SessionEvent> {
     const [event] = await db.insert(sessionEvents).values(data).returning();
     return event;
@@ -237,35 +272,31 @@ class DatabaseStorage implements IStorage {
     return db.select().from(sessionEvents).where(eq(sessionEvents.sessionId, sessionId));
   }
 
-  // Stats
   async getStats(profileId: number): Promise<{
     dueCards: number;
     masteredCards: number;
+    totalCards: number;
     totalSessions: number;
     weakPoints: { tag: string; count: number }[];
+    themeProgress: { themeId: string; total: number; mastered: number; due: number }[];
   }> {
     const today = new Date().toISOString().split("T")[0];
-    
-    const dueStates = await db
+
+    const allStates = await db
       .select()
       .from(srsStates)
-      .where(and(eq(srsStates.profileId, profileId), lte(srsStates.dueDate, today)));
-    
-    const masteredStates = await db
-      .select()
-      .from(srsStates)
-      .where(and(eq(srsStates.profileId, profileId), sql`${srsStates.intervalDays} >= 21`));
-    
+      .where(eq(srsStates.profileId, profileId));
+
+    const dueStates = allStates.filter(s => s.dueDate <= today);
+    const masteredStates = allStates.filter(s => s.intervalDays >= 21);
+
     const sessionList = await db
       .select()
-      .from(sessions)
-      .where(eq(sessions.profileId, profileId));
-    
-    const lapsedStates = await db
-      .select()
-      .from(srsStates)
-      .where(and(eq(srsStates.profileId, profileId), sql`${srsStates.lapses} >= 1`));
-    
+      .from(trainingSessions)
+      .where(eq(trainingSessions.profileId, profileId));
+
+    const lapsedStates = allStates.filter(s => s.lapses >= 1);
+
     const weakPoints: { tag: string; count: number }[] = [];
     for (const state of lapsedStates) {
       const card = await this.getMotherCard(state.cardId);
@@ -282,11 +313,30 @@ class DatabaseStorage implements IStorage {
     }
     weakPoints.sort((a, b) => b.count - a.count);
 
+    const themeMap = new Map<string, { total: number; mastered: number; due: number }>();
+    for (const state of allStates) {
+      const card = await this.getMotherCard(state.cardId);
+      if (card) {
+        const entry = themeMap.get(card.themeId) || { total: 0, mastered: 0, due: 0 };
+        entry.total++;
+        if (state.intervalDays >= 21) entry.mastered++;
+        if (state.dueDate <= today) entry.due++;
+        themeMap.set(card.themeId, entry);
+      }
+    }
+
+    const totalCards = await this.getMotherCardCount();
+
     return {
       dueCards: dueStates.length,
       masteredCards: masteredStates.length,
+      totalCards,
       totalSessions: sessionList.length,
       weakPoints: weakPoints.slice(0, 5),
+      themeProgress: Array.from(themeMap.entries()).map(([themeId, data]) => ({
+        themeId,
+        ...data,
+      })),
     };
   }
 }

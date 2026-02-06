@@ -3,7 +3,6 @@ import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, seria
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// ============== ENUMS ==============
 export const languageEnum = ["fr", "en", "es"] as const;
 export const modeEnum = ["text", "voice", "mixed"] as const;
 export const channelEnum = ["text", "irl", "voice"] as const;
@@ -13,9 +12,9 @@ export const difficultyEnum = ["n1", "n2", "n3"] as const;
 export const ratingEnum = ["hard", "medium", "easy"] as const;
 export const themeIdEnum = ["SOCIAL", "PRO", "DAILY", "RELATIONNEL", "DIFFICULT", "STORY", "CULTURE_SOCIALE"] as const;
 
-// ============== USER PROFILE ==============
 export const userProfiles = pgTable("user_profiles", {
   id: serial("id").primaryKey(),
+  userId: varchar("user_id"),
   language: text("language").notNull().default("fr"),
   primaryMode: text("primary_mode").notNull().default("text"),
   objectives: text("objectives").array().notNull().default(sql`ARRAY[]::text[]`),
@@ -37,7 +36,6 @@ export const userProfiles = pgTable("user_profiles", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
-// ============== MOTHER CARDS (Archetypes) ==============
 export const motherCards = pgTable("mother_cards", {
   id: serial("id").primaryKey(),
   cardId: text("card_id").notNull().unique(),
@@ -65,7 +63,6 @@ export const motherCards = pgTable("mother_cards", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
-// ============== SRS STATE (per user per card) ==============
 export const srsStates = pgTable("srs_states", {
   id: serial("id").primaryKey(),
   profileId: integer("profile_id").notNull().references(() => userProfiles.id, { onDelete: "cascade" }),
@@ -81,7 +78,6 @@ export const srsStates = pgTable("srs_states", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
-// ============== SCENARIOS ==============
 export const scenarios = pgTable("scenarios", {
   id: serial("id").primaryKey(),
   scenarioId: text("scenario_id").notNull().unique(),
@@ -115,8 +111,7 @@ export const scenarios = pgTable("scenarios", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
-// ============== SESSIONS ==============
-export const sessions = pgTable("sessions", {
+export const trainingSessions = pgTable("training_sessions", {
   id: serial("id").primaryKey(),
   profileId: integer("profile_id").notNull().references(() => userProfiles.id, { onDelete: "cascade" }),
   sessionDate: text("session_date").notNull(),
@@ -130,10 +125,9 @@ export const sessions = pgTable("sessions", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
-// ============== SESSION EVENTS (flashcard attempts, roleplay turns, debrief) ==============
 export const sessionEvents = pgTable("session_events", {
   id: serial("id").primaryKey(),
-  sessionId: integer("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => trainingSessions.id, { onDelete: "cascade" }),
   eventType: text("event_type").notNull(),
   cardId: text("card_id"),
   userAnswer: text("user_answer"),
@@ -154,7 +148,6 @@ export const sessionEvents = pgTable("session_events", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
-// ============== INSERT SCHEMAS ==============
 export const insertUserProfileSchema = createInsertSchema(userProfiles).omit({
   id: true,
   createdAt: true,
@@ -175,7 +168,7 @@ export const insertScenarioSchema = createInsertSchema(scenarios).omit({
   createdAt: true,
 });
 
-export const insertSessionSchema = createInsertSchema(sessions).omit({
+export const insertTrainingSessionSchema = createInsertSchema(trainingSessions).omit({
   id: true,
   createdAt: true,
 });
@@ -185,7 +178,6 @@ export const insertSessionEventSchema = createInsertSchema(sessionEvents).omit({
   createdAt: true,
 });
 
-// ============== TYPES ==============
 export type UserProfile = typeof userProfiles.$inferSelect;
 export type InsertUserProfile = z.infer<typeof insertUserProfileSchema>;
 
@@ -198,12 +190,13 @@ export type InsertSrsState = z.infer<typeof insertSrsStateSchema>;
 export type Scenario = typeof scenarios.$inferSelect;
 export type InsertScenario = z.infer<typeof insertScenarioSchema>;
 
-export type Session = typeof sessions.$inferSelect;
-export type InsertSession = z.infer<typeof insertSessionSchema>;
+export type TrainingSession = typeof trainingSessions.$inferSelect;
+export type InsertTrainingSession = z.infer<typeof insertTrainingSessionSchema>;
 
 export type SessionEvent = typeof sessionEvents.$inferSelect;
 export type InsertSessionEvent = z.infer<typeof insertSessionEventSchema>;
 
-// Chat models for AI integration
 export { conversations, messages } from "./models/chat";
 export type { Conversation, Message, InsertConversation, InsertMessage } from "./models/chat";
+
+export * from "./models/auth";

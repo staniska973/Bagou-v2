@@ -2,10 +2,10 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief } from "./ai";
-import { insertUserProfileSchema, insertSessionSchema, insertSessionEventSchema } from "@shared/schema";
+import { insertUserProfileSchema, insertSessionEventSchema } from "@shared/schema";
 import { z } from "zod";
+import { isAuthenticated } from "./replit_integrations/auth";
 
-// SRS algorithm (Anki-style SM-2)
 function calculateNextReview(
   currentInterval: number,
   ease: number,
@@ -60,7 +60,6 @@ function addDays(date: string, days: number): string {
 }
 
 export async function registerRoutes(server: Server, app: Express): Promise<void> {
-  // =========== PROFILES ===========
   app.get("/api/profiles/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -71,6 +70,23 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       res.json(profile);
     } catch (error) {
       console.error("Error fetching profile:", error);
+      res.status(500).json({ error: "Failed to fetch profile" });
+    }
+  });
+
+  app.get("/api/profiles/user/:userId", isAuthenticated, async (req: any, res) => {
+    try {
+      const authUserId = req.user?.claims?.sub;
+      if (authUserId !== req.params.userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const profile = await storage.getProfileByUserId(req.params.userId);
+      if (!profile) {
+        return res.status(404).json({ error: "Profile not found" });
+      }
+      res.json(profile);
+    } catch (error) {
+      console.error("Error fetching profile by userId:", error);
       res.status(500).json({ error: "Failed to fetch profile" });
     }
   });
@@ -103,23 +119,25 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  // =========== FLASHCARDS ===========
   app.get("/api/flashcards/due/:profileId", async (req, res) => {
     try {
       const profileId = parseInt(req.params.profileId);
       const today = new Date().toISOString().split("T")[0];
-      
+
       const profile = await storage.getProfile(profileId);
       if (!profile) {
         return res.status(404).json({ error: "Profile not found" });
       }
 
       const dueStates = await storage.getDueCards(profileId, today);
-      
+
       if (dueStates.length === 0) {
         const allCards = await storage.getAllMotherCards(profile.language);
-        const cardsToReview = allCards.slice(0, 5);
-        
+        const existingStates = await storage.getAllSrsStates(profileId);
+        const existingCardIds = new Set(existingStates.map(s => s.cardId));
+        const newCards = allCards.filter(c => !existingCardIds.has(c.cardId));
+        const cardsToReview = newCards.slice(0, 10);
+
         const results = [];
         for (const card of cardsToReview) {
           const srsState = await storage.getOrCreateSrsState(profileId, card.cardId);
@@ -129,13 +147,13 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       }
 
       const results = [];
-      for (const state of dueStates.slice(0, 10)) {
+      for (const state of dueStates.slice(0, 15)) {
         const card = await storage.getMotherCard(state.cardId);
         if (card) {
           results.push({ card, srsState: state });
         }
       }
-      
+
       res.json(results);
     } catch (error) {
       console.error("Error fetching due cards:", error);
@@ -146,25 +164,29 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
   app.post("/api/flashcards/generate-answer", async (req, res) => {
     try {
       const { profileId, cardId, userAnswer } = req.body;
-      
+
       const profile = await storage.getProfile(profileId);
       if (!profile) {
         return res.status(404).json({ error: "Profile not found" });
       }
-      
+
       const card = await storage.getMotherCard(cardId);
       if (!card) {
         return res.status(404).json({ error: "Card not found" });
       }
 
-      const result = await generateModelAnswer(profile, card, userAnswer);
-      const scoring = await scoreUserAnswer(profile, card, userAnswer, result.modelAnswer);
+      const [result, scoring] = await Promise.all([
+        generateModelAnswer(profile, card, userAnswer),
+        scoreUserAnswer(profile, card, userAnswer, ""),
+      ]);
+
+      const finalScoring = await scoreUserAnswer(profile, card, userAnswer, result.modelAnswer);
 
       res.json({
         modelAnswer: result.modelAnswer,
         variants: result.variants,
         rubric: result.rubric,
-        feedback: scoring,
+        feedback: finalScoring,
       });
     } catch (error) {
       console.error("Error generating model answer:", error);
@@ -175,10 +197,10 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
   app.post("/api/flashcards/rate", async (req, res) => {
     try {
       const { profileId, sessionId, cardId, rating, userAnswer } = req.body;
-      
+
       const srsState = await storage.getOrCreateSrsState(profileId, cardId);
       const today = new Date().toISOString().split("T")[0];
-      
+
       const { interval, ease, lapses, reps } = calculateNextReview(
         srsState.intervalDays,
         srsState.ease,
@@ -216,11 +238,21 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  // =========== SCENARIOS ===========
+  app.get("/api/scenarios", async (req, res) => {
+    try {
+      const language = (req.query.language as string) || "fr";
+      const allScenarios = await storage.getAllScenarios(language);
+      res.json(allScenarios);
+    } catch (error) {
+      console.error("Error fetching scenarios:", error);
+      res.status(500).json({ error: "Failed to fetch scenarios" });
+    }
+  });
+
   app.get("/api/scenarios/random/:profileId", async (req, res) => {
     try {
       const profileId = parseInt(req.params.profileId);
-      
+
       const profile = await storage.getProfile(profileId);
       if (!profile) {
         return res.status(404).json({ error: "Profile not found" });
@@ -230,11 +262,11 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       const linkedCardIds = hardCards.filter(s => s.needsRoleplay).map(s => s.cardId);
 
       const scenario = await storage.getRandomScenario(profile.language, linkedCardIds);
-      
+
       if (!scenario) {
         return res.status(404).json({ error: "No scenarios available" });
       }
-      
+
       res.json(scenario);
     } catch (error) {
       console.error("Error fetching random scenario:", error);
@@ -242,16 +274,15 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  // =========== ROLEPLAY ===========
   app.post("/api/roleplay/message", async (req, res) => {
     try {
       const { profileId, sessionId, scenarioId, history, userMessage } = req.body;
-      
+
       const profile = await storage.getProfile(profileId);
       if (!profile) {
         return res.status(404).json({ error: "Profile not found" });
       }
-      
+
       const scenario = await storage.getScenario(scenarioId);
       if (!scenario) {
         return res.status(404).json({ error: "Scenario not found" });
@@ -267,7 +298,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
           roleplayRole: "user",
           roleplayContent: userMessage,
         });
-        
+
         await storage.createSessionEvent({
           sessionId,
           eventType: "roleplay_turn",
@@ -284,11 +315,10 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  // =========== DEBRIEF ===========
   app.post("/api/debrief/generate", async (req, res) => {
     try {
       const { profileId, sessionId, transcript } = req.body;
-      
+
       const profile = await storage.getProfile(profileId);
       if (!profile) {
         return res.status(404).json({ error: "Profile not found" });
@@ -320,12 +350,11 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  // =========== SESSIONS ===========
   app.post("/api/sessions", async (req, res) => {
     try {
       const { profileId } = req.body;
       const today = new Date().toISOString().split("T")[0];
-      
+
       const profile = await storage.getProfile(profileId);
       if (!profile) {
         return res.status(404).json({ error: "Profile not found" });
@@ -368,7 +397,6 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  // =========== STATS ===========
   app.get("/api/stats/:profileId", async (req, res) => {
     try {
       const profileId = parseInt(req.params.profileId);
@@ -380,7 +408,37 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  // =========== SEED DATA ===========
+  app.get("/api/mother-cards", async (req, res) => {
+    try {
+      const language = (req.query.language as string) || "fr";
+      const themeId = req.query.themeId as string;
+      const subthemeId = req.query.subthemeId as string;
+
+      let cards;
+      if (themeId && subthemeId) {
+        cards = await storage.getMotherCardsBySubtheme(themeId, subthemeId, language);
+      } else if (themeId) {
+        cards = await storage.getMotherCardsByTheme(themeId, language);
+      } else {
+        cards = await storage.getAllMotherCards(language);
+      }
+      res.json(cards);
+    } catch (error) {
+      console.error("Error fetching mother cards:", error);
+      res.status(500).json({ error: "Failed to fetch mother cards" });
+    }
+  });
+
+  app.get("/api/mother-cards/count", async (req, res) => {
+    try {
+      const count = await storage.getMotherCardCount();
+      res.json({ count });
+    } catch (error) {
+      console.error("Error counting mother cards:", error);
+      res.status(500).json({ error: "Failed to count cards" });
+    }
+  });
+
   app.post("/api/seed", async (req, res) => {
     try {
       await seedDatabase();
@@ -390,9 +448,131 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       res.status(500).json({ error: "Failed to seed database" });
     }
   });
+
+  app.post("/api/admin/generate-cards", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
+      if (!user?.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const { generateAllCards, THEMES_CONFIG } = await import("./seed-cards");
+
+      res.json({ started: true, message: "Card generation started", themes: THEMES_CONFIG.map(t => ({ id: t.id, label: t.label, subthemes: t.subthemes.length })) });
+
+      generateAllCards(storage, (progress) => {
+        console.log(`[seed] ${progress.currentTheme}/${progress.currentSubtheme}: ${progress.cardsGenerated}/${progress.totalCards}`);
+      }).catch(err => console.error("Card generation error:", err));
+    } catch (error) {
+      console.error("Error starting card generation:", error);
+      res.status(500).json({ error: "Failed to start card generation" });
+    }
+  });
+
+  app.post("/api/admin/generate-subtheme", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
+      if (!user?.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const { themeId, subthemeId, forceRegenerate } = req.body;
+      const { generateSubthemeCards } = await import("./seed-cards");
+
+      const cards = await generateSubthemeCards(storage, themeId, subthemeId, forceRegenerate);
+      res.json({ success: true, cardsGenerated: cards.length });
+    } catch (error) {
+      console.error("Error generating subtheme cards:", error);
+      res.status(500).json({ error: "Failed to generate cards" });
+    }
+  });
+
+  app.get("/api/admin/themes", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
+      if (!user?.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const { THEMES_CONFIG } = await import("./seed-cards");
+      res.json(THEMES_CONFIG);
+    } catch (error) {
+      console.error("Error fetching themes:", error);
+      res.status(500).json({ error: "Failed to fetch themes" });
+    }
+  });
+
+  app.get("/api/admin/users", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
+      if (!user?.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const allUsers = await dbModule.select().from(users);
+      res.json(allUsers);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  app.patch("/api/admin/users/:id/admin", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
+      if (!user?.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const { isAdmin } = req.body;
+      const [updated] = await dbModule.update(users).set({ isAdmin }).where(eq(users.id, req.params.id)).returning();
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating user:", error);
+      res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  app.delete("/api/admin/cards/:cardId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
+      if (!user?.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      await storage.deleteMotherCard(req.params.cardId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting card:", error);
+      res.status(500).json({ error: "Failed to delete card" });
+    }
+  });
 }
 
-// Seed data function
 async function seedDatabase() {
   const existingCards = await storage.getAllMotherCards("fr");
   if (existingCards.length > 0) {
@@ -410,20 +590,20 @@ async function seedDatabase() {
       channel: "irl",
       difficulty: "n1",
       intent: "start_conversation",
-      situation: "Tu es à une soirée d'anniversaire. Tu vois quelqu'un que tu ne connais pas assis seul sur le canapé. Comment tu engages la conversation ?",
-      speakerRole: "invité",
-      otherRole: "invité inconnu",
+      situation: "Tu es a une soiree d'anniversaire. Tu vois quelqu'un que tu ne connais pas assis seul sur le canape. Comment tu engages la conversation ?",
+      speakerRole: "invite",
+      otherRole: "invite inconnu",
       relationship: "strangers",
       stakes: "low",
-      userGoal: "Engager une conversation légère et naturelle avec un inconnu",
-      constraints: ["Pas de question fermée", "Éviter les sujets trop personnels", "Rester léger et observationnel"],
+      userGoal: "Engager une conversation legere et naturelle avec un inconnu",
+      constraints: ["Pas de question fermee", "Eviter les sujets trop personnels", "Rester leger et observationnel"],
       tags: ["ice_breaker", "party", "small_talk"],
-      antiPatterns: ["Poser une question trop intime", "Parler uniquement de soi", "Être trop direct"],
-      targetVibe: "Détendu, curieux, accessible",
-      modelAnswerRules: ["Observation + question ouverte", "Touche d'humour légère", "Laisser de l'espace pour la réponse"],
-      variantRulesSafe: ["Classique et poli", "Question simple sur l'événement"],
-      variantRulesMedium: ["Un peu de personnalité", "Observation originale"],
-      variantRulesBold: ["Humour assumé", "Approche décalée mais respectueuse"],
+      antiPatterns: ["Poser une question trop intime", "Parler uniquement de soi", "Etre trop direct"],
+      targetVibe: "Detendu, curieux, accessible",
+      modelAnswerRules: ["Observation + question ouverte", "Touche d'humour legere", "Laisser de l'espace pour la reponse"],
+      variantRulesSafe: ["Classique et poli", "Question simple sur l'evenement"],
+      variantRulesMedium: ["Un peu de personnalite", "Observation originale"],
+      variantRulesBold: ["Humour assume", "Approche decalee mais respectueuse"],
     },
     {
       cardId: "FC_SOCIAL_002",
@@ -434,18 +614,18 @@ async function seedDatabase() {
       channel: "irl",
       difficulty: "n1",
       intent: "give_compliment",
-      situation: "Un ami te montre un nouveau projet créatif sur lequel il a travaillé. Comment tu lui fais un compliment authentique ?",
+      situation: "Un ami te montre un nouveau projet creatif sur lequel il a travaille. Comment tu lui fais un compliment authentique ?",
       speakerRole: "ami",
-      otherRole: "ami créateur",
+      otherRole: "ami createur",
       relationship: "friends",
       stakes: "low",
-      userGoal: "Faire un compliment sincère qui valorise l'effort et le résultat",
-      constraints: ["Être spécifique", "Éviter les formules creuses", "Montrer que tu as vraiment regardé"],
+      userGoal: "Faire un compliment sincere qui valorise l'effort et le resultat",
+      constraints: ["Etre specifique", "Eviter les formules creuses", "Montrer que tu as vraiment regarde"],
       tags: ["compliment", "friendship", "encouragement"],
-      antiPatterns: ["'C'est cool' sans précision", "Comparer à quelque chose de négatif", "Changer de sujet trop vite"],
-      targetVibe: "Chaleureux, sincère, enthousiaste",
-      modelAnswerRules: ["Mentionner un détail spécifique", "Exprimer une émotion", "Poser une question sur le processus"],
-      variantRulesSafe: ["Compliment classique et sincère"],
+      antiPatterns: ["'C'est cool' sans precision", "Comparer a quelque chose de negatif", "Changer de sujet trop vite"],
+      targetVibe: "Chaleureux, sincere, enthousiaste",
+      modelAnswerRules: ["Mentionner un detail specifique", "Exprimer une emotion", "Poser une question sur le processus"],
+      variantRulesSafe: ["Compliment classique et sincere"],
       variantRulesMedium: ["Ajout d'enthousiasme visible"],
       variantRulesBold: ["Expression d'admiration franche"],
     },
@@ -459,19 +639,19 @@ async function seedDatabase() {
       difficulty: "n2",
       intent: "decline_request",
       situation: "Ton manager te demande de rester tard ce soir pour finir un projet, mais tu as un engagement personnel important. Comment tu refuses poliment ?",
-      speakerRole: "employé",
+      speakerRole: "employe",
       otherRole: "manager",
       relationship: "professional_hierarchy",
       stakes: "medium",
       userGoal: "Refuser la demande tout en maintenant une bonne relation professionnelle",
-      constraints: ["Être ferme mais respectueux", "Proposer une alternative", "Ne pas trop se justifier"],
+      constraints: ["Etre ferme mais respectueux", "Proposer une alternative", "Ne pas trop se justifier"],
       tags: ["assertiveness", "work_life_balance", "boundary"],
-      antiPatterns: ["S'excuser excessivement", "Mentir sur la raison", "Accepter à contrecœur"],
+      antiPatterns: ["S'excuser excessivement", "Mentir sur la raison", "Accepter a contrecoeur"],
       targetVibe: "Professionnel, calme, assertif",
       modelAnswerRules: ["Exprimer la limite clairement", "Proposer une solution", "Rester concis"],
-      variantRulesSafe: ["Diplomatique avec excuse légère"],
+      variantRulesSafe: ["Diplomatique avec excuse legere"],
       variantRulesMedium: ["Direct mais proposant une alternative"],
-      variantRulesBold: ["Très direct, pas d'excuse"],
+      variantRulesBold: ["Tres direct, pas d'excuse"],
     },
     {
       cardId: "FC_DAILY_001",
@@ -482,18 +662,18 @@ async function seedDatabase() {
       channel: "irl",
       difficulty: "n2",
       intent: "make_complaint",
-      situation: "Tu reçois ton plat au restaurant et il est froid. Comment tu fais remarquer le problème au serveur ?",
+      situation: "Tu recois ton plat au restaurant et il est froid. Comment tu fais remarquer le probleme au serveur ?",
       speakerRole: "client",
       otherRole: "serveur",
       relationship: "service",
       stakes: "low",
-      userGoal: "Obtenir un plat chaud sans créer de tension",
-      constraints: ["Rester poli", "Être factuel", "Donner une chance de corriger"],
+      userGoal: "Obtenir un plat chaud sans creer de tension",
+      constraints: ["Rester poli", "Etre factuel", "Donner une chance de corriger"],
       tags: ["complaint", "restaurant", "service"],
-      antiPatterns: ["Être passif-agressif", "S'emporter", "Ignorer le problème"],
+      antiPatterns: ["Etre passif-agressif", "S'emporter", "Ignorer le probleme"],
       targetVibe: "Calme, factuel, assertif",
       modelAnswerRules: ["Constater le fait", "Demander poliment", "Remercier la prise en charge"],
-      variantRulesSafe: ["Très poli avec beaucoup de précaution"],
+      variantRulesSafe: ["Tres poli avec beaucoup de precaution"],
       variantRulesMedium: ["Direct mais aimable"],
       variantRulesBold: ["Factuel et confiant"],
     },
@@ -506,20 +686,20 @@ async function seedDatabase() {
       channel: "text",
       difficulty: "n2",
       intent: "tease_playfully",
-      situation: "Tu discutes avec quelqu'un qui te plaît sur une app de rencontre. La personne dit qu'elle adore les films d'horreur. Comment tu rebondis de manière taquine ?",
+      situation: "Tu discutes avec quelqu'un qui te plait sur une app de rencontre. La personne dit qu'elle adore les films d'horreur. Comment tu rebondis de maniere taquine ?",
       speakerRole: "utilisateur",
       otherRole: "match",
       relationship: "potential_romantic",
       stakes: "low",
-      userGoal: "Créer du jeu et de la légèreté dans la conversation",
-      constraints: ["Rester léger", "Ne pas être méchant", "Montrer de l'intérêt"],
+      userGoal: "Creer du jeu et de la legerete dans la conversation",
+      constraints: ["Rester leger", "Ne pas etre mechant", "Montrer de l'interet"],
       tags: ["flirting", "dating", "teasing"],
-      antiPatterns: ["Être condescendant", "Trop d'accord sur tout", "Réponse plate"],
-      targetVibe: "Joueur, léger, charmeur",
-      modelAnswerRules: ["Taquinerie gentille", "Question ou challenge ludique", "Montrer sa personnalité"],
-      variantRulesSafe: ["Intérêt sincère avec légère taquinerie"],
-      variantRulesMedium: ["Taquinerie assumée avec question maligne"],
-      variantRulesBold: ["Challenge ludique plus prononcé"],
+      antiPatterns: ["Etre condescendant", "Trop d'accord sur tout", "Reponse plate"],
+      targetVibe: "Joueur, leger, charmeur",
+      modelAnswerRules: ["Taquinerie gentille", "Question ou challenge ludique", "Montrer sa personnalite"],
+      variantRulesSafe: ["Interet sincere avec legere taquinerie"],
+      variantRulesMedium: ["Taquinerie assumee avec question maligne"],
+      variantRulesBold: ["Challenge ludique plus prononce"],
     },
   ];
 
@@ -533,26 +713,26 @@ async function seedDatabase() {
       subthemeId: "party_conversation",
       language: "fr",
       primaryChannel: "irl",
-      title: "La soirée entre amis d'amis",
-      context: "Tu es à une soirée organisée par ton ami Marc. Il y a beaucoup de gens que tu ne connais pas. Julie, une amie de Marc, vient vers toi.",
-      objective: "Avoir une conversation fluide et agréable avec Julie, faire bonne impression",
+      title: "La soiree entre amis d'amis",
+      context: "Tu es a une soiree organisee par ton ami Marc. Il y a beaucoup de gens que tu ne connais pas. Julie, une amie de Marc, vient vers toi.",
+      objective: "Avoir une conversation fluide et agreable avec Julie, faire bonne impression",
       constraints: ["Rester authentique", "Trouver des points communs", "Ne pas monopoliser la parole"],
-      startingMessage: "Hey ! Tu dois être un ami de Marc, non ? Moi c'est Julie. Tu connais beaucoup de monde ici ?",
+      startingMessage: "Hey ! Tu dois etre un ami de Marc, non ? Moi c'est Julie. Tu connais beaucoup de monde ici ?",
       aiName: "Julie",
-      aiPersona: "Jeune femme sociable, curieuse, travaille dans l'événementiel. Aime les conversations légères mais apprécie aussi la profondeur.",
-      aiStance: "Ouverte et accueillante, pose des questions, réagit positivement",
-      aiBoundaries: ["Ne devient pas trop personnelle trop vite", "Reste polie même si mal à l'aise"],
+      aiPersona: "Jeune femme sociable, curieuse, travaille dans l'evenementiel. Aime les conversations legeres mais apprecie aussi la profondeur.",
+      aiStance: "Ouverte et accueillante, pose des questions, reagit positivement",
+      aiBoundaries: ["Ne devient pas trop personnelle trop vite", "Reste polie meme si mal a l'aise"],
       userName: "Toi",
-      userFrame: "Nouveau à la soirée, cherche à socialiser naturellement",
+      userFrame: "Nouveau a la soiree, cherche a socialiser naturellement",
       targetSkills: ["small_talk", "listening", "building_rapport"],
       difficulty: "n1",
       durationSecondsTarget: 180,
       turnsMin: 6,
       turnsMax: 10,
-      phase1: "Introduction et découverte mutuelle",
+      phase1: "Introduction et decouverte mutuelle",
       phase2: "Approfondissement des points communs",
-      phase3: "Clôture naturelle ou échange de contacts",
-      successEndings: ["Échange de numéro", "Proposition de se revoir", "Conversation mémorable"],
+      phase3: "Cloture naturelle ou echange de contacts",
+      successEndings: ["Echange de numero", "Proposition de se revoir", "Conversation memorable"],
       failureEndings: ["Malaise palpable", "Conversation qui meurt", "Fuite polie"],
       linkedCardIds: ["FC_SOCIAL_001", "FC_SOCIAL_002"],
     },
@@ -564,25 +744,25 @@ async function seedDatabase() {
       language: "fr",
       primaryChannel: "irl",
       title: "La demande d'augmentation",
-      context: "Tu travailles dans cette entreprise depuis 2 ans. Tu as obtenu de bons résultats et tu estimes mériter une augmentation. Tu as rdv avec ton manager.",
-      objective: "Obtenir une augmentation ou au moins ouvrir une négociation sérieuse",
-      constraints: ["Rester professionnel", "Argumenter avec des faits", "Gérer les objections"],
+      context: "Tu travailles dans cette entreprise depuis 2 ans. Tu as obtenu de bons resultats et tu estimes meriter une augmentation. Tu as rdv avec ton manager.",
+      objective: "Obtenir une augmentation ou au moins ouvrir une negociation serieuse",
+      constraints: ["Rester professionnel", "Argumenter avec des faits", "Gerer les objections"],
       startingMessage: "Ah, assieds-toi. Alors, tu voulais me voir ? De quoi s'agit-il ?",
       aiName: "Antoine",
-      aiPersona: "Manager de 45 ans, pragmatique, apprécie les employés mais doit gérer les budgets. Juste mais ferme.",
-      aiStance: "Écoute, pose des questions, présente des objections raisonnables",
-      aiBoundaries: ["Ne s'énerve pas", "Reste professionnel", "Peut dire non mais explique"],
+      aiPersona: "Manager de 45 ans, pragmatique, apprecie les employes mais doit gerer les budgets. Juste mais ferme.",
+      aiStance: "Ecoute, pose des questions, presente des objections raisonnables",
+      aiBoundaries: ["Ne s'enerve pas", "Reste professionnel", "Peut dire non mais explique"],
       userName: "Toi",
-      userFrame: "Employé motivé qui veut être reconnu à sa juste valeur",
+      userFrame: "Employe motive qui veut etre reconnu a sa juste valeur",
       targetSkills: ["assertiveness", "negotiation", "handling_objections"],
       difficulty: "n2",
       durationSecondsTarget: 240,
       turnsMin: 8,
       turnsMax: 12,
-      phase1: "Présentation de la demande",
+      phase1: "Presentation de la demande",
       phase2: "Gestion des objections",
-      phase3: "Négociation et accord",
-      successEndings: ["Augmentation accordée", "Plan d'action défini", "Discussion constructive"],
+      phase3: "Negociation et accord",
+      successEndings: ["Augmentation accordee", "Plan d'action defini", "Discussion constructive"],
       failureEndings: ["Refus sec", "Malaise relationnel", "Arguments non entendus"],
       linkedCardIds: ["FC_PRO_001"],
     },

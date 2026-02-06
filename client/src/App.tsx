@@ -6,42 +6,68 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LanguageToggle } from "@/components/language-toggle";
-import { useAppStore } from "@/lib/store";
+import { useAuth } from "@/hooks/use-auth";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import NotFound from "@/pages/not-found";
+import Landing from "@/pages/landing";
 import Onboarding from "@/pages/onboarding";
 import Home from "@/pages/home";
 import Session from "@/pages/session";
 import Stats from "@/pages/stats";
+import Roleplay from "@/pages/roleplay";
+import Admin from "@/pages/admin";
 
-function Router() {
-  const { hasCompletedOnboarding, profileId, currentSessionId } = useAppStore();
-
+function AuthenticatedRouter() {
   return (
     <Switch>
       <Route path="/onboarding" component={Onboarding} />
-      <Route path="/session">
-        {currentSessionId ? <Session /> : <Redirect to="/" />}
-      </Route>
+      <Route path="/session" component={Session} />
       <Route path="/stats" component={Stats} />
-      <Route path="/">
-        {hasCompletedOnboarding && profileId ? <Home /> : <Redirect to="/onboarding" />}
-      </Route>
+      <Route path="/roleplay" component={Roleplay} />
+      <Route path="/admin" component={Admin} />
+      <Route path="/" component={Home} />
       <Route component={NotFound} />
     </Switch>
   );
 }
 
 function AppHeader() {
-  const { hasCompletedOnboarding } = useAppStore();
-  
-  if (!hasCompletedOnboarding) return null;
-  
+  const { user, logout } = useAuth();
+
+  if (!user) return null;
+
   return (
-    <header className="fixed top-0 right-0 z-50 p-4 flex items-center gap-2">
+    <header className="fixed top-0 right-0 z-50 p-3 flex items-center gap-2">
       <LanguageToggle />
       <ThemeToggle />
     </header>
+  );
+}
+
+function AppContent() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="space-y-4 text-center">
+          <Skeleton className="w-16 h-16 rounded-full mx-auto" />
+          <Skeleton className="w-32 h-4 mx-auto" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Landing />;
+  }
+
+  return (
+    <>
+      <AppHeader />
+      <AuthenticatedRouter />
+    </>
   );
 }
 
@@ -50,8 +76,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <TooltipProvider>
-          <AppHeader />
-          <Router />
+          <AppContent />
           <Toaster />
         </TooltipProvider>
       </ThemeProvider>
