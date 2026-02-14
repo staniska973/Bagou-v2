@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 import type { UserProfile, MotherCard, Scenario } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -6,7 +7,18 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-const MODEL = "gpt-4o-mini";
+const gemini = new GoogleGenAI({
+  apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
+  httpOptions: {
+    apiVersion: "",
+    baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+  },
+});
+
+const GPT_MODEL = "gpt-4o-mini";
+const GEMINI_MODEL = "gemini-2.5-flash";
+const SCORING_PROVIDER = (process.env.SCORING_MODEL || "gemini") as "gpt" | "gemini";
+const GENERATION_PROVIDER = (process.env.GENERATION_MODEL || "gpt") as "gpt" | "gemini";
 const TEMPERATURE = 0.85;
 
 const BAGOU_SYSTEM = `Tu es le coach Bagou. Philosophie :
@@ -81,10 +93,10 @@ JSON:
 {"modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."},"rubric":["...","...","..."]}`;
 
   const start = Date.now();
-  console.log(`[AI] generateModelAnswer: calling ${MODEL}...`);
+  console.log(`[AI] generateModelAnswer: calling ${GPT_MODEL}...`);
 
   const response = await openai.chat.completions.create({
-    model: MODEL,
+    model: GPT_MODEL,
     messages: [
       { role: "system", content: BAGOU_SYSTEM },
       { role: "user", content: prompt },
@@ -151,22 +163,39 @@ JSON:
 {"pass":true,"ratingSuggested":"medium","oneFix":"...","redoPrompt":"...","feedback":"..."}`;
 
   const start = Date.now();
-  console.log(`[AI] scoreUserAnswer: calling ${MODEL}...`);
+  const provider = SCORING_PROVIDER;
+  console.log(`[AI] scoreUserAnswer: calling ${provider === "gemini" ? GEMINI_MODEL : GPT_MODEL}...`);
 
-  const response = await openai.chat.completions.create({
-    model: MODEL,
-    messages: [
-      { role: "system", content: BAGOU_SYSTEM },
-      { role: "user", content: prompt },
-    ],
-    response_format: { type: "json_object" },
-    max_completion_tokens: 250,
-    temperature: 0.7,
-  });
+  let content: string;
+
+  if (provider === "gemini") {
+    const fullPrompt = `${BAGOU_SYSTEM}\n\n${prompt}`;
+    const response = await gemini.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: fullPrompt,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.7,
+        maxOutputTokens: 8192,
+      },
+    });
+    content = response.text || "{}";
+  } else {
+    const response = await openai.chat.completions.create({
+      model: GPT_MODEL,
+      messages: [
+        { role: "system", content: BAGOU_SYSTEM },
+        { role: "user", content: prompt },
+      ],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 250,
+      temperature: 0.7,
+    });
+    content = response.choices[0]?.message?.content || "{}";
+  }
 
   const elapsed = Date.now() - start;
-  const content = response.choices[0]?.message?.content || "{}";
-  console.log(`[AI] scoreUserAnswer: ${elapsed}ms`);
+  console.log(`[AI] scoreUserAnswer (${provider}): ${elapsed}ms`);
 
   try {
     const parsed = JSON.parse(content);
@@ -224,10 +253,10 @@ RÈGLES DU PERSONNAGE :
   ];
 
   const start = Date.now();
-  console.log(`[AI] generateRoleplayTurn: calling ${MODEL}, turn ${turnCount}...`);
+  console.log(`[AI] generateRoleplayTurn: calling ${GPT_MODEL}, turn ${turnCount}...`);
 
   const response = await openai.chat.completions.create({
-    model: MODEL,
+    model: GPT_MODEL,
     messages,
     response_format: { type: "json_object" },
     max_completion_tokens: 250,
@@ -270,10 +299,10 @@ JSON:
 {"strengths":["...","..."],"improvement":"...","optimizedRewrite":"...","redoExercise":"...","scores":{"clarity":75,"frame":80,"tone":70,"concision":65}}`;
 
   const start = Date.now();
-  console.log(`[AI] generateDebrief: calling ${MODEL}...`);
+  console.log(`[AI] generateDebrief: calling ${GPT_MODEL}...`);
 
   const response = await openai.chat.completions.create({
-    model: MODEL,
+    model: GPT_MODEL,
     messages: [
       { role: "system", content: BAGOU_SYSTEM },
       { role: "user", content: prompt },

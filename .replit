@@ -39,4 +39,10 @@ args = "npm run dev"
 waitForPort = 5000
 
 [agent]
-integrations = ["javascript_openai_ai_integrations:2.0.0", "javascript_log_in_with_replit:2.0.0"]
+integrations = ["javascript_openai_ai_integrations:2.0.0", "javascript_log_in_with_replit:2.0.0", "javascript_gemini_ai_integrations:2.0.0"]
+
+[userenv]
+
+[userenv.shared]
+SCORING_MODEL = "gemini"
+GENERATION_MODEL = "gpt"
