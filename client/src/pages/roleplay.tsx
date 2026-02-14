@@ -88,23 +88,13 @@ const DIFFICULTY_VARIANTS: Record<string, "secondary" | "default" | "destructive
   n3: "destructive",
 };
 
-const THEME_LABELS: Record<string, Record<string, string>> = {
-  fr: {
-    SOCIAL: "Social & Amical",
-    PRO: "Professionnel",
-    DAILY: "Quotidien",
-    RELATIONNEL: "Relationnel",
-    DIFFICULT: "Situations difficiles",
-    STORYTELLING: "Storytelling",
-  },
-  en: {
-    SOCIAL: "Social & Friendly",
-    PRO: "Professional",
-    DAILY: "Daily Life",
-    RELATIONNEL: "Relationships",
-    DIFFICULT: "Difficult Situations",
-    STORYTELLING: "Storytelling",
-  },
+const THEME_LABELS: Record<string, string> = {
+  SOCIAL: "Social & Amical",
+  PRO: "Professionnel",
+  DAILY: "Quotidien",
+  RELATIONNEL: "Relationnel",
+  DIFFICULT: "Situations difficiles",
+  STORYTELLING: "Storytelling",
 };
 
 export default function Roleplay() {
@@ -257,7 +247,7 @@ export default function Roleplay() {
   };
 
   const themeLabel = (themeId: string) =>
-    THEME_LABELS[language]?.[themeId] || THEME_LABELS.fr[themeId] || themeId;
+    THEME_LABELS[themeId] || themeId;
 
   if (scenariosLoading) {
     return (
@@ -403,7 +393,7 @@ export default function Roleplay() {
               <CardContent className="p-4">
                 <p className="text-sm text-muted-foreground mb-1">{activeScenario.context}</p>
                 <p className="text-xs text-muted-foreground">
-                  <span className="font-medium">{language === "fr" ? "Objectif" : "Goal"}:</span> {activeScenario.objective}
+                  <span className="font-medium">Objectif:</span> {activeScenario.objective}
                 </p>
               </CardContent>
             </Card>
@@ -449,7 +439,7 @@ export default function Roleplay() {
           </div>
         </div>
 
-        <div className="sticky bottom-0 bg-background/80 backdrop-blur-md border-t px-4 py-3">
+        <div className="sticky bottom-0 bg-background/80 backdrop-blur-md border-t px-4 py-3 safe-area-bottom">
           <div className="max-w-2xl mx-auto flex items-end gap-2">
             <Textarea
               placeholder={t.roleplay.yourTurn}
@@ -486,7 +476,7 @@ export default function Roleplay() {
               {t.session.roleplay}
             </h1>
             <p className="text-xs text-muted-foreground">
-              {scenarios?.length || 0} {language === "fr" ? "scenarios disponibles" : "scenarios available"}
+              {scenarios?.length || 0} scénarios disponibles
             </p>
           </div>
         </div>
@@ -498,7 +488,7 @@ export default function Roleplay() {
             <div className="flex items-center gap-2 mb-3">
               <Sparkles className="w-4 h-4 text-primary" />
               <h2 className="font-semibold text-sm" data-testid="text-smart-suggestions-title">
-                {language === "fr" ? "Suggestions pour vous" : "Suggested for you"}
+                Suggestions pour vous
               </h2>
             </div>
             <div className="flex gap-3 overflow-x-auto pb-2">
@@ -594,7 +584,7 @@ export default function Roleplay() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-12">
             <MessageSquare className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
             <p className="text-muted-foreground">
-              {language === "fr" ? "Aucun scenario disponible" : "No scenarios available"}
+              Aucun scénario disponible
             </p>
           </motion.div>
         )}

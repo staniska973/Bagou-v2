@@ -61,13 +61,13 @@ export default function Admin() {
             <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto">
               <ShieldAlert className="w-8 h-8 text-destructive" />
             </div>
-            <h2 className="text-xl font-bold" data-testid="text-access-denied">Access Denied</h2>
+            <h2 className="text-xl font-bold" data-testid="text-access-denied">Accès refusé</h2>
             <p className="text-muted-foreground" data-testid="text-access-denied-message">
-              You do not have admin privileges to access this page.
+              Vous n'avez pas les droits d'administrateur pour accéder à cette page.
             </p>
             <Button onClick={() => navigate("/")} data-testid="button-go-home">
               <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Home
+              Retour à l'accueil
             </Button>
           </CardContent>
         </Card>
@@ -84,22 +84,22 @@ export default function Admin() {
               <Settings className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold" data-testid="text-admin-title">Admin Portal</h1>
-              <p className="text-sm text-muted-foreground">Manage Bagou content and users</p>
+              <h1 className="text-2xl font-bold" data-testid="text-admin-title">Portail Admin</h1>
+              <p className="text-sm text-muted-foreground">Gérer le contenu et les utilisateurs Bagou</p>
             </div>
           </div>
           <Button variant="outline" onClick={() => navigate("/")} data-testid="button-back-home">
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
+            Retour
           </Button>
         </div>
 
         <Tabs defaultValue="overview" data-testid="tabs-admin">
           <TabsList data-testid="tabs-list">
-            <TabsTrigger value="overview" data-testid="tab-overview">Overview</TabsTrigger>
-            <TabsTrigger value="cards" data-testid="tab-cards">Cards</TabsTrigger>
-            <TabsTrigger value="generate" data-testid="tab-generate">Generate</TabsTrigger>
-            <TabsTrigger value="users" data-testid="tab-users">Users</TabsTrigger>
+            <TabsTrigger value="overview" data-testid="tab-overview">Vue d'ensemble</TabsTrigger>
+            <TabsTrigger value="cards" data-testid="tab-cards">Cartes</TabsTrigger>
+            <TabsTrigger value="generate" data-testid="tab-generate">Générer</TabsTrigger>
+            <TabsTrigger value="users" data-testid="tab-users">Utilisateurs</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">
@@ -149,7 +149,7 @@ function OverviewTab() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Cards</CardTitle>
+            <CardTitle className="text-sm font-medium">Total cartes</CardTitle>
             <Database className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -163,7 +163,7 @@ function OverviewTab() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Users</CardTitle>
+            <CardTitle className="text-sm font-medium">Total utilisateurs</CardTitle>
             <Users className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -177,7 +177,7 @@ function OverviewTab() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Themes</CardTitle>
+            <CardTitle className="text-sm font-medium">Thèmes</CardTitle>
             <Settings className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -192,7 +192,7 @@ function OverviewTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Cards per Theme</CardTitle>
+          <CardTitle className="text-base">Cartes par thème</CardTitle>
         </CardHeader>
         <CardContent>
           {cardsLoading ? (
@@ -210,12 +210,12 @@ function OverviewTab() {
                     <span className="text-sm">{theme.label}</span>
                   </div>
                   <span className="text-sm font-medium" data-testid={`text-theme-count-${theme.id}`}>
-                    {cardsPerTheme[theme.id] || 0} cards
+                    {cardsPerTheme[theme.id] || 0} cartes
                   </span>
                 </div>
               ))}
               {(!themes || themes.length === 0) && (
-                <p className="text-sm text-muted-foreground">No themes configured</p>
+                <p className="text-sm text-muted-foreground">Aucun thème configuré</p>
               )}
             </div>
           )}
@@ -257,10 +257,10 @@ function CardsTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/mother-cards"] });
       queryClient.invalidateQueries({ queryKey: ["/api/mother-cards/count"] });
-      toast({ title: "Card deleted", description: "The card has been removed." });
+      toast({ title: "Carte supprimée", description: "La carte a été supprimée." });
     },
     onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
     },
   });
 
@@ -281,7 +281,7 @@ function CardsTab() {
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search cards..."
+            placeholder="Rechercher des cartes..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9"
@@ -290,10 +290,10 @@ function CardsTab() {
         </div>
         <Select value={selectedTheme} onValueChange={setSelectedTheme}>
           <SelectTrigger className="w-[180px]" data-testid="select-theme-filter">
-            <SelectValue placeholder="Filter by theme" />
+            <SelectValue placeholder="Filtrer par thème" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All themes</SelectItem>
+            <SelectItem value="all">Tous les thèmes</SelectItem>
             {themes?.map((theme) => (
               <SelectItem key={theme.id} value={theme.id}>
                 {theme.label}
@@ -315,11 +315,11 @@ function CardsTab() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Card ID</TableHead>
-                  <TableHead>Theme</TableHead>
-                  <TableHead>Subtheme</TableHead>
+                  <TableHead>ID Carte</TableHead>
+                  <TableHead>Thème</TableHead>
+                  <TableHead>Sous-thème</TableHead>
                   <TableHead className="hidden md:table-cell">Situation</TableHead>
-                  <TableHead>Difficulty</TableHead>
+                  <TableHead>Difficulté</TableHead>
                   <TableHead className="w-[60px]"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -354,7 +354,7 @@ function CardsTab() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                      No cards found
+                      Aucune carte trouvée
                     </TableCell>
                   </TableRow>
                 )}
@@ -366,7 +366,7 @@ function CardsTab() {
 
       {filteredCards && (
         <p className="text-sm text-muted-foreground" data-testid="text-cards-count">
-          Showing {filteredCards.length} card{filteredCards.length !== 1 ? "s" : ""}
+          Affichage de {filteredCards.length} carte{filteredCards.length !== 1 ? "s" : ""}
         </p>
       )}
     </div>
@@ -391,10 +391,10 @@ function GenerateTab() {
       return res.json();
     },
     onSuccess: (data) => {
-      toast({ title: "Generation started", description: data.message || "Full card generation has begun in the background." });
+      toast({ title: "Génération lancée", description: data.message || "La génération de toutes les cartes a commencé en arrière-plan." });
     },
     onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
     },
   });
 
@@ -411,12 +411,12 @@ function GenerateTab() {
       queryClient.invalidateQueries({ queryKey: ["/api/mother-cards"] });
       queryClient.invalidateQueries({ queryKey: ["/api/mother-cards/count"] });
       toast({
-        title: "Generation complete",
-        description: `Generated ${data.cardsGenerated} cards for ${selectedSubtheme}.`,
+        title: "Génération terminée",
+        description: `${data.cardsGenerated} cartes générées pour ${selectedSubtheme}.`,
       });
     },
     onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
     },
   });
 
@@ -426,13 +426,13 @@ function GenerateTab() {
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Zap className="w-4 h-4" />
-            Generate All Cards
+            Générer toutes les cartes
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Trigger a full generation of cards across all themes and subthemes.
-            This runs in the background and may take several minutes.
+            Lancer une génération complète des cartes pour tous les thèmes et sous-thèmes.
+            L'opération s'exécute en arrière-plan et peut prendre plusieurs minutes.
           </p>
           <Button
             onClick={() => generateAll.mutate()}
@@ -442,12 +442,12 @@ function GenerateTab() {
             {generateAll.isPending ? (
               <>
                 <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                Starting...
+                Démarrage...
               </>
             ) : (
               <>
                 <Zap className="w-4 h-4 mr-2" />
-                Generate All Cards
+                Générer toutes les cartes
               </>
             )}
           </Button>
@@ -458,7 +458,7 @@ function GenerateTab() {
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <RefreshCw className="w-4 h-4" />
-            Generate by Subtheme
+            Générer par sous-thème
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -471,7 +471,7 @@ function GenerateTab() {
               }}
             >
               <SelectTrigger className="w-[200px]" data-testid="select-gen-theme">
-                <SelectValue placeholder="Select theme" />
+                <SelectValue placeholder="Sélectionner le thème" />
               </SelectTrigger>
               <SelectContent>
                 {themes?.map((theme) => (
@@ -488,7 +488,7 @@ function GenerateTab() {
               disabled={!selectedTheme}
             >
               <SelectTrigger className="w-[200px]" data-testid="select-gen-subtheme">
-                <SelectValue placeholder="Select subtheme" />
+                <SelectValue placeholder="Sélectionner le sous-thème" />
               </SelectTrigger>
               <SelectContent>
                 {currentTheme?.subthemes.map((sub) => (
@@ -507,7 +507,7 @@ function GenerateTab() {
                 className="rounded"
                 data-testid="checkbox-force-regenerate"
               />
-              Force regenerate
+              Forcer la régénération
             </label>
           </div>
 
@@ -519,12 +519,12 @@ function GenerateTab() {
             {generateSubtheme.isPending ? (
               <>
                 <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                Generating...
+                Génération...
               </>
             ) : (
               <>
                 <RefreshCw className="w-4 h-4 mr-2" />
-                Generate Subtheme
+                Générer le sous-thème
               </>
             )}
           </Button>
@@ -548,10 +548,10 @@ function UsersTab() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      toast({ title: "User updated", description: "Admin status has been updated." });
+      toast({ title: "Utilisateur mis à jour", description: "Le statut administrateur a été modifié." });
     },
     onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
     },
   });
 
@@ -568,10 +568,10 @@ function UsersTab() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>User</TableHead>
+                <TableHead>Utilisateur</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Admin</TableHead>
-                <TableHead>Joined</TableHead>
+                <TableHead>Inscription</TableHead>
                 <TableHead className="w-[100px]"></TableHead>
               </TableRow>
             </TableHeader>
@@ -606,7 +606,7 @@ function UsersTab() {
                         disabled={toggleAdmin.isPending}
                         data-testid={`button-toggle-admin-${u.id}`}
                       >
-                        {u.isAdmin ? "Remove Admin" : "Make Admin"}
+                        {u.isAdmin ? "Retirer Admin" : "Rendre Admin"}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -614,7 +614,7 @@ function UsersTab() {
               ) : (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                    No users found
+                    Aucun utilisateur trouvé
                   </TableCell>
                 </TableRow>
               )}

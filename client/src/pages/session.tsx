@@ -176,7 +176,7 @@ export default function Session() {
 
   if (cardsLoading || !profileId) {
     return (
-      <div className="h-screen flex items-center justify-center bg-background">
+      <div className="h-dvh flex items-center justify-center bg-background">
         <div className="space-y-4 w-full max-w-md px-4">
           <Skeleton className="w-full h-6" />
           <Skeleton className="w-full h-32 rounded-lg" />
@@ -188,7 +188,7 @@ export default function Session() {
 
   if (sessionDone || !dueCards || dueCards.length === 0) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">
+      <div className="h-dvh flex items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -218,8 +218,8 @@ export default function Session() {
   const progressPercent = dueCards.length > 0 ? (currentCardIndex / dueCards.length) * 100 : 0;
 
   return (
-    <div className="h-screen flex flex-col bg-background">
-      <div className="flex-shrink-0 border-b px-3 py-2">
+    <div className="h-dvh flex flex-col bg-background">
+      <div className="flex-shrink-0 border-b px-3 py-2 safe-area-top">
         <div className="max-w-lg mx-auto flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={handleFinish} data-testid="button-back-home">
             <ArrowLeft className="w-5 h-5" />

@@ -130,8 +130,8 @@ export default function Onboarding() {
                 <StepContainer title={t.onboarding.language.title} description={t.onboarding.language.description}>
                   <div className="grid grid-cols-2 gap-4">
                     {[
-                      { code: "fr", label: "Français", flag: "🇫🇷" },
-                      { code: "en", label: "English", flag: "🇬🇧" },
+                      { code: "fr", label: "Français", flag: "FR" },
+                      { code: "en", label: "English", flag: "EN" },
                     ].map((lang) => (
                       <Card
                         key={lang.code}

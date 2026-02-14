@@ -26,13 +26,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 
 const LEVELS = [
-  { level: 1, name: "Debutant", min: 0, max: 10 },
+  { level: 1, name: "Débutant", min: 0, max: 10 },
   { level: 2, name: "Apprenti", min: 11, max: 30 },
   { level: 3, name: "Communicant", min: 31, max: 60 },
   { level: 4, name: "Orateur", min: 61, max: 100 },
   { level: 5, name: "Tribun", min: 101, max: 200 },
   { level: 6, name: "Virtuose", min: 201, max: 500 },
-  { level: 7, name: "Maitre", min: 501, max: Infinity },
+  { level: 7, name: "Maître", min: 501, max: Infinity },
 ];
 
 function getLevel(mastered: number) {
@@ -60,13 +60,13 @@ function getNextLevelCards(mastered: number) {
   return next.min - mastered;
 }
 
-const THEME_LABELS: Record<string, { fr: string; en: string }> = {
-  SOCIAL: { fr: "Social", en: "Social" },
-  PRO: { fr: "Professionnel", en: "Professional" },
-  DAILY: { fr: "Quotidien", en: "Daily" },
-  RELATIONNEL: { fr: "Relationnel", en: "Relationship" },
-  DIFFICULT: { fr: "Difficile", en: "Difficult" },
-  STORYTELLING: { fr: "Storytelling", en: "Storytelling" },
+const THEME_LABELS: Record<string, string> = {
+  SOCIAL: "Social",
+  PRO: "Professionnel",
+  DAILY: "Quotidien",
+  RELATIONNEL: "Relationnel",
+  DIFFICULT: "Difficile",
+  STORYTELLING: "Storytelling",
 };
 
 const THEME_COLORS: Record<string, string> = {
@@ -252,7 +252,7 @@ export default function Stats() {
                 <div className="flex items-center justify-between gap-4 mb-3">
                   <div>
                     <p className="text-sm opacity-80">
-                      {language === "fr" ? "Niveau" : "Level"} {currentLevel.level}
+                      Niveau {currentLevel.level}
                     </p>
                     <h2 className="text-2xl font-bold" data-testid="text-level-name">{currentLevel.name}</h2>
                   </div>
@@ -262,10 +262,10 @@ export default function Stats() {
                 </div>
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm opacity-90">
-                    <span data-testid="text-mastered-count">{masteredCards} {language === "fr" ? "maitrisees" : "mastered"}</span>
+                    <span data-testid="text-mastered-count">{masteredCards} maîtrisées</span>
                     {currentLevel.level < 7 && (
                       <span data-testid="text-next-level">
-                        {cardsToNext} {language === "fr" ? "pour le prochain" : "to next"}
+                        {cardsToNext} pour le prochain
                       </span>
                     )}
                   </div>
@@ -304,9 +304,7 @@ export default function Stats() {
                   <div className="flex-1">
                     <p className="text-3xl font-bold" data-testid="text-streak-count">{streak}</p>
                     <p className="text-sm text-muted-foreground">
-                      {streak === 1
-                        ? (language === "fr" ? "jour de serie" : "day streak")
-                        : (language === "fr" ? "jours de serie" : "day streak")}
+                      {streak === 1 ? "jour de série" : "jours de série"}
                     </p>
                   </div>
                   <div className="flex gap-1">
@@ -335,7 +333,7 @@ export default function Stats() {
                 <Trophy className="w-5 h-5 text-green-500 mx-auto mb-2" />
                 <p className="text-2xl font-bold" data-testid="text-total-mastered">{masteredCards}</p>
                 <p className="text-xs text-muted-foreground">
-                  {language === "fr" ? "Maitrisees" : "Mastered"}
+                  Maîtrisées
                 </p>
               </CardContent>
             </Card>
@@ -360,13 +358,13 @@ export default function Stats() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <TrendingUp className="w-4 h-4 text-primary" />
-                  {language === "fr" ? "Maitrise globale" : "Overall Mastery"}
+                  Maîtrise globale
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground" data-testid="text-mastery-ratio">
-                    {masteredCards}/{totalCards} {language === "fr" ? "cartes" : "cards"}
+                    {masteredCards}/{totalCards} cartes
                   </span>
                   <span className="font-medium" data-testid="text-mastery-percent">{overallMastery}%</span>
                 </div>
@@ -387,7 +385,7 @@ export default function Stats() {
                 {themeProgress.length > 0 ? (
                   themeProgress.map((theme) => {
                     const percent = theme.total > 0 ? Math.round((theme.mastered / theme.total) * 100) : 0;
-                    const label = THEME_LABELS[theme.themeId]?.[language] || theme.themeId;
+                    const label = THEME_LABELS[theme.themeId] || theme.themeId;
                     const colorClass = THEME_COLORS[theme.themeId] || "bg-primary";
                     return (
                       <div key={theme.themeId} className="space-y-1" data-testid={`theme-progress-${theme.themeId}`}>
@@ -410,9 +408,7 @@ export default function Stats() {
                   })
                 ) : (
                   <p className="text-sm text-muted-foreground text-center py-4" data-testid="text-no-theme-data">
-                    {language === "fr"
-                      ? "Commencez des sessions pour voir votre progression par theme"
-                      : "Start sessions to see your progress by theme"}
+                    Commencez des sessions pour voir votre progression par thème
                   </p>
                 )}
               </CardContent>
@@ -444,7 +440,7 @@ export default function Stats() {
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground text-center py-4" data-testid="text-no-weak-points">
-                    {language === "fr" ? "Aucun point faible detecte" : "No weak points detected"}
+                    Aucun point faible détecté
                   </p>
                 )}
               </CardContent>
@@ -456,7 +452,7 @@ export default function Stats() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Star className="w-4 h-4 text-yellow-500" />
-                  {language === "fr" ? "Badges" : "Achievements"}
+                  Badges
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -464,7 +460,7 @@ export default function Stats() {
                   {ACHIEVEMENTS.map((achievement) => {
                     const unlocked = achievement.check(safeStats, safeProfile);
                     const Icon = achievement.icon;
-                    const label = language === "fr" ? achievement.labelFr : achievement.labelEn;
+                    const label = achievement.labelFr;
                     return (
                       <div
                         key={achievement.id}

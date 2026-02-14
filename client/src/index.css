@@ -294,3 +294,21 @@
     inset: -1px;
   }
 }
+
+.h-dvh {
+  height: 100dvh;
+}
+
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@supports (-webkit-touch-callout: none) {
+  .h-dvh {
+    height: -webkit-fill-available;
+  }
+}

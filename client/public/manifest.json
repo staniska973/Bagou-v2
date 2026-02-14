@@ -1,0 +1,24 @@
+{
+  "name": "Bagou - Coach en communication",
+  "short_name": "Bagou",
+  "description": "Entraînez vos réflexes de communication avec des flashcards, mises en situation et coaching IA.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1B2A4A",
+  "theme_color": "#1B2A4A",
+  "orientation": "portrait",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
