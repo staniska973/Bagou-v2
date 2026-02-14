@@ -121,27 +121,31 @@ export async function scoreUserAnswer(
   userAnswer: string,
   modelAnswer: string
 ): Promise<FlashcardScoringResponse> {
-  const prompt = `Évalue la réponse de l'utilisateur. Sois EXIGEANT.
+  const prompt = `Évalue la réponse de l'utilisateur à cette situation de communication.
 
-CRITÈRES BAGOU :
-- Concision : La réponse fait-elle 1-2 phrases ? Si c'est un pavé → échec.
-- Cadre : L'utilisateur garde-t-il le contrôle sans se justifier ?
-- Punch : La réponse a-t-elle de l'impact ou c'est mou ?
-- Pas de soumission : Aucune excuse, aucune justification, aucun "désolé mais..."
-
-Situation : ${card.situation}
-Objectif : ${card.userGoal}
-À éviter : ${card.antiPatterns?.join(", ") || "aucun"}
+SITUATION : ${card.situation}
+OBJECTIF : ${card.userGoal}
+À ÉVITER : ${card.antiPatterns?.join(", ") || "aucun"}
 Réponse modèle : "${modelAnswer}"
 Réponse utilisateur : "${userAnswer}"
 Profil : ton=${profile.tonePrimary}, risque=${profile.riskLevel}
 
-RÈGLES :
-- feedback = 1 phrase sèche et directe. Pas de "c'est bien essayé". Sois cash.
-- oneFix = 1 conseil concret en une phrase pour améliorer
+QUAND ÉCHOUER (pass=false, ratingSuggested="hard") — UNIQUEMENT si :
+- L'utilisateur se JUSTIFIE, s'EXCUSE ou se SOUMET ("désolé", "non mais en fait...", "t'as raison...")
+- L'utilisateur tombe dans un anti-pattern listé ci-dessus
+- La réponse est un PAVÉ de plus de 4 phrases
+- L'utilisateur FUIT la situation ou ne répond pas à l'objectif
+
+QUAND VALIDER (pass=true) :
+- ratingSuggested="medium" : La réponse tient le cadre et ne tombe dans aucun anti-pattern. Elle va dans la bonne direction même si elle manque de punch ou est un peu longue (3 phrases ok).
+- ratingSuggested="easy" : La réponse est courte (1-2 phrases), percutante, tient le cadre parfaitement. Style Bagou.
+
+IMPORTANT : L'utilisateur APPREND. Une réponse qui va dans le bon sens SANS se justifier ni s'excuser = pass. On réserve l'échec aux vrais anti-patterns, pas au manque de style.
+
+RÈGLES DE FORMAT :
+- feedback = 1 phrase directe style Bagou. Si pass=true, souligne ce qui est bien ET ce qui peut être amélioré. Si pass=false, dis pourquoi c'est raté sans ménagement.
+- oneFix = 1 conseil concret en une phrase
 - redoPrompt = reformulation courte si raté, vide si réussi
-- pass = true SEULEMENT si la réponse est courte, percutante et tient le cadre
-- ratingSuggested : "hard" si raté ou trop long, "medium" si correct mais sans punch, "easy" si court et percutant
 
 JSON:
 {"pass":true,"ratingSuggested":"medium","oneFix":"...","redoPrompt":"...","feedback":"..."}`;
