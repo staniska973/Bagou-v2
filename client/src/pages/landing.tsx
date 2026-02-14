@@ -63,12 +63,15 @@ export default function Landing() {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="flex justify-center order-1 lg:order-2"
           >
-            <img
-              src={bagouLogo}
-              alt="Bagou"
-              className="w-48 sm:w-64 lg:w-full lg:max-w-sm object-contain"
-              data-testid="img-hero-logo"
-            />
+            <div className="relative">
+              <div className="absolute inset-0 bg-primary/10 rounded-full blur-3xl scale-110" />
+              <img
+                src={bagouLogo}
+                alt="Bagou"
+                className="relative w-56 sm:w-72 lg:w-full lg:max-w-md object-contain drop-shadow-lg"
+                data-testid="img-hero-logo"
+              />
+            </div>
           </motion.div>
         </div>
       </section>
