@@ -1,10 +1,14 @@
 import type { Express } from "express";
 import type { Server } from "http";
+import multer from "multer";
 import { storage } from "./storage";
 import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief } from "./ai";
+import { speechToText, ensureCompatibleFormat } from "./replit_integrations/audio/client";
 import { insertUserProfileSchema, insertSessionEventSchema } from "@shared/schema";
 import { z } from "zod";
 import { isAuthenticated } from "./replit_integrations/auth";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 function calculateNextReview(
   currentInterval: number,
@@ -124,11 +128,25 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       const profileId = parseInt(req.params.profileId);
       const themeId = req.query.themeId as string | undefined;
       const subthemeId = req.query.subthemeId as string | undefined;
+      const mode = req.query.mode as string | undefined;
       const today = new Date().toISOString().split("T")[0];
 
       const profile = await storage.getProfile(profileId);
       if (!profile) {
         return res.status(404).json({ error: "Profile not found" });
+      }
+
+      if (mode === "review") {
+        const weakStates = await storage.getWeakCards(profileId);
+        const results = [];
+        for (const state of weakStates) {
+          if (results.length >= 15) break;
+          const card = await storage.getMotherCard(state.cardId);
+          if (card && card.language === profile.language) {
+            results.push({ card, srsState: state });
+          }
+        }
+        return res.json(results);
       }
 
       const dueStates = await storage.getDueCards(profileId, today);
@@ -624,6 +642,23 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     } catch (error) {
       console.error("Error deleting card:", error);
       res.status(500).json({ error: "Failed to delete card" });
+    }
+  });
+
+  app.post("/api/transcribe", upload.single("audio"), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No audio file provided" });
+      }
+
+      const rawBuffer = Buffer.from(req.file.buffer);
+      const { buffer: audioBuffer, format } = await ensureCompatibleFormat(rawBuffer);
+      const text = await speechToText(audioBuffer, format);
+
+      res.json({ text });
+    } catch (error) {
+      console.error("Error transcribing audio:", error);
+      res.status(500).json({ error: "Failed to transcribe audio" });
     }
   });
 }

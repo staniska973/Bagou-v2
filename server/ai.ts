@@ -7,6 +7,17 @@ const openai = new OpenAI({
 });
 
 const MODEL = "gpt-4o-mini";
+const TEMPERATURE = 0.85;
+
+const BAGOU_SYSTEM = `Tu es le coach Bagou. Philosophie :
+- RÉFLEXE, pas monologue. Chaque réponse = 1 à 2 phrases MAX. Percutante. Tranchante.
+- On ne se justifie JAMAIS. On ne s'excuse pas d'exister.
+- Le silence est une arme. La concision est le pouvoir.
+- On ose l'inconfort. On recadre sans agressivité mais sans faiblesse.
+- Ton direct, piquant, parfois provocateur. Zéro langue de bois.
+- Pas de "je comprends que tu ressentes..." ni de formules thérapeutiques molles.
+- Style : comme les signatures Bagou → "On ne négocie pas le respect." / "On garde son cadre." / "On ne retient personne."
+- Langue : français exclusivement, registre courant/familier naturel (pas soutenu).`;
 
 interface FlashcardGenerationResponse {
   modelAnswer: string;
@@ -50,27 +61,37 @@ export async function generateModelAnswer(
   card: MotherCard,
   userAnswer: string
 ): Promise<FlashcardGenerationResponse> {
-  const lang = profile.language === "fr" ? "French" : "English";
-  const prompt = `Communication coach. Generate a model answer and 3 variants (safe/medium/bold) for this situation.
+  const prompt = `Génère une réponse modèle et 3 variantes pour cette situation.
 
-Profile: tone=${profile.tonePrimary}, risk=${profile.riskLevel}, lang=${lang}, formality=${profile.tuVous}
-Situation: ${card.situation}
-Goal: ${card.userGoal}
-Avoid: ${card.antiPatterns?.join(", ") || "none"}
-Vibe: ${card.targetVibe}
-User wrote: "${userAnswer}"
+RÈGLES ABSOLUES :
+- Réponse modèle = 1 à 2 phrases MAX. Pas un mot de plus.
+- Variante "safe" = version prudente mais ferme (1 phrase)
+- Variante "medium" = version directe et assurée (1-2 phrases)  
+- Variante "bold" = version audacieuse, piquante, qui déstabilise (1-2 phrases)
+- Rubrique = 3 critères courts pour évaluer (ex: "Pas de justification", "Ton stable", "Silence après")
 
-Respond in ${lang}. JSON:
-{"modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."},"rubric":["check1","check2","check3"]}`;
+Profil : ton=${profile.tonePrimary}, risque=${profile.riskLevel}, tutoiement=${profile.tuVous}
+Situation : ${card.situation}
+Objectif : ${card.userGoal}
+À éviter : ${card.antiPatterns?.join(", ") || "aucun"}
+Vibe cible : ${card.targetVibe}
+L'utilisateur a écrit : "${userAnswer}"
+
+JSON:
+{"modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."},"rubric":["...","...","..."]}`;
 
   const start = Date.now();
   console.log(`[AI] generateModelAnswer: calling ${MODEL}...`);
 
   const response = await openai.chat.completions.create({
     model: MODEL,
-    messages: [{ role: "user", content: prompt }],
+    messages: [
+      { role: "system", content: BAGOU_SYSTEM },
+      { role: "user", content: prompt },
+    ],
     response_format: { type: "json_object" },
-    max_completion_tokens: 800,
+    max_completion_tokens: 300,
+    temperature: TEMPERATURE,
   });
 
   const elapsed = Date.now() - start;
@@ -80,14 +101,14 @@ Respond in ${lang}. JSON:
   try {
     const parsed = JSON.parse(content);
     return {
-      modelAnswer: parsed.modelAnswer || "No model answer generated",
+      modelAnswer: parsed.modelAnswer || "Réponse non générée",
       variants: parsed.variants || { safe: "", medium: "", bold: "" },
       rubric: parsed.rubric || [],
     };
   } catch (e) {
     console.error("[AI] Failed to parse model answer response:", content);
     return {
-      modelAnswer: "Unable to generate model answer",
+      modelAnswer: "Impossible de générer la réponse",
       variants: { safe: "", medium: "", bold: "" },
       rubric: [],
     };
@@ -100,27 +121,43 @@ export async function scoreUserAnswer(
   userAnswer: string,
   modelAnswer: string
 ): Promise<FlashcardScoringResponse> {
-  const lang = profile.language === "fr" ? "French" : "English";
-  const prompt = `Communication coach. Evaluate user's answer vs model answer.
+  const prompt = `Évalue la réponse de l'utilisateur. Sois EXIGEANT.
 
-Situation: ${card.situation}
-Goal: ${card.userGoal}
-Avoid: ${card.antiPatterns?.join(", ") || "none"}
-Model: "${modelAnswer}"
-User: "${userAnswer}"
-Profile: tone=${profile.tonePrimary}, risk=${profile.riskLevel}
+CRITÈRES BAGOU :
+- Concision : La réponse fait-elle 1-2 phrases ? Si c'est un pavé → échec.
+- Cadre : L'utilisateur garde-t-il le contrôle sans se justifier ?
+- Punch : La réponse a-t-elle de l'impact ou c'est mou ?
+- Pas de soumission : Aucune excuse, aucune justification, aucun "désolé mais..."
 
-Respond in ${lang}. JSON:
-{"pass":true/false,"ratingSuggested":"hard"|"medium"|"easy","oneFix":"...","redoPrompt":"...","feedback":"..."}`;
+Situation : ${card.situation}
+Objectif : ${card.userGoal}
+À éviter : ${card.antiPatterns?.join(", ") || "aucun"}
+Réponse modèle : "${modelAnswer}"
+Réponse utilisateur : "${userAnswer}"
+Profil : ton=${profile.tonePrimary}, risque=${profile.riskLevel}
+
+RÈGLES :
+- feedback = 1 phrase sèche et directe. Pas de "c'est bien essayé". Sois cash.
+- oneFix = 1 conseil concret en une phrase pour améliorer
+- redoPrompt = reformulation courte si raté, vide si réussi
+- pass = true SEULEMENT si la réponse est courte, percutante et tient le cadre
+- ratingSuggested : "hard" si raté ou trop long, "medium" si correct mais sans punch, "easy" si court et percutant
+
+JSON:
+{"pass":true,"ratingSuggested":"medium","oneFix":"...","redoPrompt":"...","feedback":"..."}`;
 
   const start = Date.now();
   console.log(`[AI] scoreUserAnswer: calling ${MODEL}...`);
 
   const response = await openai.chat.completions.create({
     model: MODEL,
-    messages: [{ role: "user", content: prompt }],
+    messages: [
+      { role: "system", content: BAGOU_SYSTEM },
+      { role: "user", content: prompt },
+    ],
     response_format: { type: "json_object" },
-    max_completion_tokens: 400,
+    max_completion_tokens: 250,
+    temperature: 0.7,
   });
 
   const elapsed = Date.now() - start;
@@ -141,9 +178,9 @@ Respond in ${lang}. JSON:
     return {
       pass: false,
       ratingSuggested: "medium",
-      oneFix: "Unable to evaluate",
+      oneFix: "Évaluation indisponible",
       redoPrompt: "",
-      feedback: "Scoring unavailable",
+      feedback: "Évaluation indisponible",
     };
   }
 }
@@ -157,12 +194,21 @@ export async function generateRoleplayTurn(
   const turnCount = history.filter((m) => m.role === "user").length + 1;
   const isNearEnd = turnCount >= (scenario.turnsMin || 6);
 
-  const systemPrompt = `You are "${scenario.aiName}" in a roleplay. Context: ${scenario.context}
-Persona: ${scenario.aiPersona}. Stance: ${scenario.aiStance}.
-Arc: open=${scenario.phase1}, resist=${scenario.phase2}, resolve=${scenario.phase3}.
-Turn ${turnCount}. ${isNearEnd ? "Near end, wrap up naturally." : ""}
-Language: ${profile.language === "fr" ? "French" : "English"}. Keep responses to 1-3 sentences.
-JSON: {"aiMessage":"...","stop":false,"internalThought":"..."}`;
+  const systemPrompt = `${BAGOU_SYSTEM}
+
+ROLEPLAY : Tu joues "${scenario.aiName}". Tu n'es PAS le coach, tu es le personnage.
+Contexte : ${scenario.context}
+Persona : ${scenario.aiPersona}. Position : ${scenario.aiStance}.
+Arc narratif : ouverture=${scenario.phase1}, résistance=${scenario.phase2}, résolution=${scenario.phase3}.
+Tour ${turnCount}. ${isNearEnd ? "Fin proche, conclus naturellement." : ""}
+
+RÈGLES DU PERSONNAGE :
+- Tu testes l'utilisateur. Tu es provocateur, manipulateur ou condescendant selon le scénario.
+- Tu ne facilites PAS la tâche. Tu résistes, tu piques, tu déstabilises.
+- Tes répliques font 1-3 phrases MAX. Naturel, oral, pas littéraire.
+- Si l'utilisateur te recadre bien → tu cèdes progressivement (arc).
+- Si l'utilisateur est mou → tu en rajoutes, tu pousses.
+- JSON: {"aiMessage":"...","stop":false,"internalThought":"..."}`;
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
@@ -180,7 +226,8 @@ JSON: {"aiMessage":"...","stop":false,"internalThought":"..."}`;
     model: MODEL,
     messages,
     response_format: { type: "json_object" },
-    max_completion_tokens: 300,
+    max_completion_tokens: 250,
+    temperature: TEMPERATURE,
   });
 
   const elapsed = Date.now() - start;
@@ -199,16 +246,23 @@ export async function generateDebrief(
   profile: UserProfile,
   transcript: { role: string; content: string }[]
 ): Promise<DebriefResponse> {
-  const lang = profile.language === "fr" ? "French" : "English";
-  const prompt = `Communication coach debrief. Analyze this roleplay transcript.
+  const prompt = `Débriefe ce roleplay. Style Bagou : direct, percutant, pas de blabla.
 
-Profile: tone=${profile.tonePrimary}, risk=${profile.riskLevel}, lang=${lang}
+Profil : ton=${profile.tonePrimary}, risque=${profile.riskLevel}
 
-Transcript:
-${transcript.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n")}
+Transcription :
+${transcript.map((m) => `${m.role === "user" ? "UTILISATEUR" : "IA"}: ${m.content}`).join("\n")}
 
-Provide 2 strengths, 1 improvement, rewrite of weakest response, redo exercise, and scores (0-100).
-Respond in ${lang}. JSON:
+RÈGLES :
+- strengths : 2 points forts en UNE phrase chacun, style punchline ("Tu as tenu ton cadre sans ciller")
+- improvement : 1 axe d'amélioration en UNE phrase directe, pas de ménagement
+- optimizedRewrite : réécris la plus faible réponse de l'utilisateur en version Bagou (1-2 phrases MAX)
+- redoExercise : 1 exercice concret à refaire (1 phrase)
+- scores : 0-100 pour clarté, cadre, ton, concision. Sois sévère.
+
+SIGNATURE FINALE : Termine improvement par une signature Bagou (ex: "On ne négocie pas sa place.")
+
+JSON:
 {"strengths":["...","..."],"improvement":"...","optimizedRewrite":"...","redoExercise":"...","scores":{"clarity":75,"frame":80,"tone":70,"concision":65}}`;
 
   const start = Date.now();
@@ -216,9 +270,13 @@ Respond in ${lang}. JSON:
 
   const response = await openai.chat.completions.create({
     model: MODEL,
-    messages: [{ role: "user", content: prompt }],
+    messages: [
+      { role: "system", content: BAGOU_SYSTEM },
+      { role: "user", content: prompt },
+    ],
     response_format: { type: "json_object" },
-    max_completion_tokens: 800,
+    max_completion_tokens: 400,
+    temperature: 0.8,
   });
 
   const elapsed = Date.now() - start;

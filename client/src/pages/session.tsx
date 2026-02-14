@@ -11,6 +11,9 @@ import {
   Loader2,
   AlertTriangle,
   ChevronDown,
+  RotateCcw,
+  Mic,
+  MicOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -69,6 +72,7 @@ export default function Session() {
   const profileIdParam = params.get("profileId");
   const themeId = params.get("themeId");
   const subthemeId = params.get("subthemeId");
+  const mode = params.get("mode");
   const { language } = useAppStore();
   const { user } = useAuth();
   const t = getTranslations(language);
@@ -87,21 +91,30 @@ export default function Session() {
 
   const profileId = profileIdParam ? parseInt(profileIdParam) : profile?.id;
 
-  const [currentCardIndex, setCurrentCardIndex] = useState(0);
+  const [cardQueue, setCardQueue] = useState<FlashcardData[]>([]);
+  const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
   const [userAnswer, setUserAnswer] = useState("");
   const [feedbackData, setFeedbackData] = useState<FeedbackData | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [cardsCompleted, setCardsCompleted] = useState(0);
+  const [cardsFailed, setCardsFailed] = useState(0);
   const [sessionDone, setSessionDone] = useState(false);
   const [showVariants, setShowVariants] = useState(false);
+  const [isRetry, setIsRetry] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   let dueUrl = `/api/flashcards/due/${profileId}`;
-  if (themeId) dueUrl += `?themeId=${themeId}`;
-  if (subthemeId) dueUrl += `${themeId ? "&" : "?"}subthemeId=${subthemeId}`;
+  if (mode === "review") {
+    dueUrl += `?mode=review`;
+  } else {
+    if (themeId) dueUrl += `?themeId=${themeId}`;
+    if (subthemeId) dueUrl += `${themeId ? "&" : "?"}subthemeId=${subthemeId}`;
+  }
 
   const { data: dueCards, isLoading: cardsLoading } = useQuery<FlashcardData[]>({
-    queryKey: ["/api/flashcards/due", profileId, themeId, subthemeId],
+    queryKey: ["/api/flashcards/due", profileId, themeId, subthemeId, mode],
     queryFn: async () => {
       const res = await fetch(dueUrl);
       if (!res.ok) throw new Error("Failed to fetch");
@@ -110,7 +123,14 @@ export default function Session() {
     enabled: !!profileId,
   });
 
-  const currentCard = dueCards?.[currentCardIndex];
+  useEffect(() => {
+    if (dueCards && dueCards.length > 0 && cardQueue.length === 0) {
+      setCardQueue([...dueCards]);
+    }
+  }, [dueCards]);
+
+  const currentCard = cardQueue[currentQueueIndex];
+  const totalOriginal = dueCards?.length || 0;
 
   const submitAnswer = async () => {
     if (!userAnswer.trim() || !currentCard || !profileId) return;
@@ -133,7 +153,12 @@ export default function Session() {
         rating,
         userAnswer: userAnswer.trim(),
       });
-      setCardsCompleted((prev) => prev + 1);
+
+      if (data.feedback.pass) {
+        setCardsCompleted((prev) => prev + 1);
+      } else {
+        setCardsFailed((prev) => prev + 1);
+      }
     } catch (error) {
       console.error("Error submitting answer:", error);
     } finally {
@@ -142,11 +167,22 @@ export default function Session() {
   };
 
   const nextCard = () => {
-    if (dueCards && currentCardIndex < dueCards.length - 1) {
-      setCurrentCardIndex((prev) => prev + 1);
+    const failed = feedbackData && !feedbackData.feedback.pass;
+    const shouldRequeue = failed && !isRetry;
+
+    if (shouldRequeue) {
+      setCardQueue((prev) => [...prev, currentCard]);
+    }
+
+    const nextIdx = currentQueueIndex + 1;
+    const queueLength = cardQueue.length + (shouldRequeue ? 1 : 0);
+
+    if (nextIdx < queueLength) {
+      setCurrentQueueIndex(nextIdx);
       setUserAnswer("");
       setFeedbackData(null);
       setShowVariants(false);
+      setIsRetry(nextIdx >= totalOriginal);
     } else {
       setSessionDone(true);
     }
@@ -162,6 +198,53 @@ export default function Session() {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submitAnswer();
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        setIsRecording(false);
+
+        try {
+          const formData = new FormData();
+          formData.append("audio", blob, "recording.webm");
+          const res = await fetch("/api/transcribe", {
+            method: "POST",
+            body: formData,
+          });
+          if (res.ok) {
+            const { text } = await res.json();
+            if (text) {
+              setUserAnswer((prev) => (prev ? prev + " " + text : text));
+            }
+          }
+        } catch (err) {
+          console.error("Transcription error:", err);
+        }
+      };
+
+      recorder.start();
+      setMediaRecorder(recorder);
+      setIsRecording(true);
+    } catch (err) {
+      console.error("Microphone access denied:", err);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+      mediaRecorder.stop();
     }
   };
 
@@ -186,7 +269,7 @@ export default function Session() {
     );
   }
 
-  if (sessionDone || !dueCards || dueCards.length === 0) {
+  if (sessionDone || (!cardQueue.length && !cardsLoading)) {
     return (
       <div className="h-dvh flex items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">
         <motion.div
@@ -198,13 +281,18 @@ export default function Session() {
             <CardContent className="p-6">
               <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
               <h2 className="text-xl font-bold mb-1" data-testid="text-session-complete">
-                {sessionDone ? "Session terminee" : "Aucune carte a reviser"}
+                {sessionDone ? "Session terminée" : "Aucune carte à réviser"}
               </h2>
-              <p className="text-sm text-muted-foreground mb-4">
+              <p className="text-sm text-muted-foreground mb-2">
                 {sessionDone
-                  ? `${cardsCompleted} carte${cardsCompleted > 1 ? "s" : ""} revue${cardsCompleted > 1 ? "s" : ""}`
+                  ? `${cardsCompleted} carte${cardsCompleted > 1 ? "s" : ""} validée${cardsCompleted > 1 ? "s" : ""}`
                   : "Revenez plus tard pour de nouvelles cartes"}
               </p>
+              {cardsFailed > 0 && sessionDone && (
+                <p className="text-xs text-orange-500 mb-4">
+                  {cardsFailed} carte{cardsFailed > 1 ? "s" : ""} à retravailler
+                </p>
+              )}
               <Button onClick={handleFinish} className="w-full" data-testid="button-finish-session">
                 Retour
               </Button>
@@ -215,7 +303,9 @@ export default function Session() {
     );
   }
 
-  const progressPercent = dueCards.length > 0 ? (currentCardIndex / dueCards.length) * 100 : 0;
+  const progressPercent = totalOriginal > 0
+    ? Math.min((currentQueueIndex / totalOriginal) * 100, 100)
+    : 0;
 
   return (
     <div className="h-dvh flex flex-col bg-background">
@@ -233,9 +323,17 @@ export default function Session() {
                   {subthemeId ? ` / ${subthemeId}` : ""}
                 </span>
               </div>
-              <span className="text-xs text-muted-foreground">
-                {currentCardIndex + 1}/{dueCards.length}
-              </span>
+              <div className="flex items-center gap-1.5">
+                {isRetry && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    <RotateCcw className="w-2.5 h-2.5 mr-0.5" />
+                    Rattrapage
+                  </Badge>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  {Math.min(currentQueueIndex + 1, cardQueue.length)}/{cardQueue.length}
+                </span>
+              </div>
             </div>
             <Progress value={progressPercent} className="h-1" />
           </div>
@@ -245,7 +343,7 @@ export default function Session() {
       <div className="flex-1 flex flex-col overflow-hidden max-w-lg mx-auto w-full">
         <AnimatePresence mode="wait">
           <motion.div
-            key={currentCard?.card.cardId}
+            key={`${currentCard?.card.cardId}-${currentQueueIndex}`}
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
@@ -263,12 +361,18 @@ export default function Session() {
                       <Badge variant="outline" className="text-[10px]" data-testid="badge-difficulty">
                         {currentCard.card.difficulty === "n1" ? "Facile" : currentCard.card.difficulty === "n2" ? "Moyen" : "Difficile"}
                       </Badge>
+                      {isRetry && (
+                        <Badge variant="destructive" className="text-[10px]">
+                          <RotateCcw className="w-2.5 h-2.5 mr-0.5" />
+                          2e essai
+                        </Badge>
+                      )}
                     </div>
                     <p className="text-sm leading-relaxed" data-testid="text-situation">
                       {currentCard.card.situation}
                     </p>
                     <p className="text-xs text-muted-foreground mt-2">
-                      <span className="font-medium">Objectif:</span> {currentCard.card.userGoal}
+                      <span className="font-medium">Objectif :</span> {currentCard.card.userGoal}
                     </p>
                   </CardContent>
                 </Card>
@@ -278,7 +382,7 @@ export default function Session() {
                     <CardContent className="p-3 flex-1 flex flex-col">
                       <Textarea
                         ref={textareaRef}
-                        placeholder="Ecrivez votre reponse..."
+                        placeholder="Votre réponse (1-2 phrases max)..."
                         value={userAnswer}
                         onChange={(e) => setUserAnswer(e.target.value)}
                         onKeyDown={handleKeyDown}
@@ -286,7 +390,20 @@ export default function Session() {
                         disabled={isSubmitting}
                         data-testid="textarea-answer"
                       />
-                      <div className="flex justify-end mt-2">
+                      <div className="flex items-center justify-between gap-2 mt-2">
+                        <Button
+                          variant={isRecording ? "destructive" : "outline"}
+                          size="icon"
+                          onClick={isRecording ? stopRecording : startRecording}
+                          disabled={isSubmitting}
+                          data-testid="button-voice"
+                        >
+                          {isRecording ? (
+                            <MicOff className="w-4 h-4" />
+                          ) : (
+                            <Mic className="w-4 h-4" />
+                          )}
+                        </Button>
                         <Button
                           onClick={submitAnswer}
                           disabled={!userAnswer.trim() || isSubmitting}
@@ -296,7 +413,7 @@ export default function Session() {
                           {isSubmitting ? (
                             <>
                               <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                              Evaluation...
+                              Évaluation...
                             </>
                           ) : (
                             <>
@@ -323,20 +440,28 @@ export default function Session() {
                         <XCircle className="w-4 h-4 text-destructive" />
                       )}
                       <span className="font-semibold text-sm" data-testid="text-verdict">
-                        {feedbackData.feedback.pass ? "Bien joue" : "A retravailler"}
+                        {feedbackData.feedback.pass ? "Bien joué" : "À retravailler"}
                       </span>
                       <Badge
                         variant={feedbackData.feedback.ratingSuggested === "easy" ? "default" : feedbackData.feedback.ratingSuggested === "medium" ? "secondary" : "destructive"}
                         className="ml-auto text-[10px]"
                         data-testid="badge-rating"
                       >
-                        {feedbackData.feedback.ratingSuggested === "easy" ? "Maitrise" : feedbackData.feedback.ratingSuggested === "medium" ? "Correct" : "Difficile"}
+                        {feedbackData.feedback.ratingSuggested === "easy" ? "Maîtrisé" : feedbackData.feedback.ratingSuggested === "medium" ? "Correct" : "Difficile"}
                       </Badge>
                     </div>
                     <p className="text-xs" data-testid="text-feedback">{feedbackData.feedback.feedback}</p>
+                    {!feedbackData.feedback.pass && (
+                      <div className="bg-orange-500/10 rounded-md p-2 text-xs mt-2">
+                        <p className="font-medium text-[10px] text-orange-600 dark:text-orange-400 mb-0.5">
+                          <RotateCcw className="w-2.5 h-2.5 inline mr-0.5" />
+                          Cette carte reviendra en fin de session
+                        </p>
+                      </div>
+                    )}
                     {feedbackData.feedback.oneFix && (
                       <div className="bg-muted/50 rounded-md p-2 text-xs mt-2">
-                        <p className="font-medium text-[10px] text-muted-foreground mb-0.5">Amelioration</p>
+                        <p className="font-medium text-[10px] text-muted-foreground mb-0.5">Conseil</p>
                         <p data-testid="text-onefix">{feedbackData.feedback.oneFix}</p>
                       </div>
                     )}
@@ -345,7 +470,7 @@ export default function Session() {
 
                 <Card className="flex-shrink-0">
                   <CardContent className="p-3">
-                    <p className="font-medium text-xs text-muted-foreground mb-1">Reponse modele</p>
+                    <p className="font-medium text-xs text-muted-foreground mb-1">Réponse modèle</p>
                     <p className="text-sm leading-relaxed" data-testid="text-model-answer">{feedbackData.modelAnswer}</p>
 
                     <button
@@ -364,7 +489,7 @@ export default function Session() {
                         className="space-y-2 mt-2 overflow-hidden"
                       >
                         <VariantRow label="Prudente" text={feedbackData.variants.safe} testId="text-variant-safe" />
-                        <VariantRow label="Equilibree" text={feedbackData.variants.medium} testId="text-variant-medium" />
+                        <VariantRow label="Équilibrée" text={feedbackData.variants.medium} testId="text-variant-medium" />
                         <VariantRow label="Audacieuse" text={feedbackData.variants.bold} testId="text-variant-bold" />
                       </motion.div>
                     )}
@@ -372,7 +497,7 @@ export default function Session() {
                 </Card>
 
                 <Button onClick={nextCard} className="w-full flex-shrink-0" data-testid="button-next-card">
-                  {currentCardIndex < dueCards.length - 1 ? (
+                  {currentQueueIndex < cardQueue.length - 1 || (feedbackData && !feedbackData.feedback.pass && !isRetry) ? (
                     <>
                       Suivante
                       <ChevronRight className="w-4 h-4 ml-1" />

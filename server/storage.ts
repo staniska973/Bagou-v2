@@ -19,7 +19,7 @@ import {
   type SessionEvent,
   type InsertSessionEvent,
 } from "@shared/schema";
-import { eq, and, lte, sql, desc, asc, gte } from "drizzle-orm";
+import { eq, and, lte, sql, desc, asc, gte, or } from "drizzle-orm";
 
 export interface IStorage {
   getProfile(id: number): Promise<UserProfile | undefined>;
@@ -40,6 +40,7 @@ export interface IStorage {
 
   getSrsState(profileId: number, cardId: string): Promise<SrsState | undefined>;
   getDueCards(profileId: number, date: string): Promise<SrsState[]>;
+  getWeakCards(profileId: number): Promise<SrsState[]>;
   getAllSrsStates(profileId: number): Promise<SrsState[]>;
   createSrsState(data: InsertSrsState): Promise<SrsState>;
   updateSrsState(id: number, data: Partial<InsertSrsState>): Promise<SrsState | undefined>;
@@ -64,6 +65,7 @@ export interface IStorage {
     masteredCards: number;
     totalCards: number;
     totalSessions: number;
+    weakCards: number;
     weakPoints: { tag: string; count: number }[];
     themeProgress: { themeId: string; total: number; mastered: number; due: number }[];
   }>;
@@ -164,6 +166,19 @@ class DatabaseStorage implements IStorage {
       .from(srsStates)
       .where(and(eq(srsStates.profileId, profileId), lte(srsStates.dueDate, date)))
       .orderBy(asc(srsStates.dueDate));
+  }
+
+  async getWeakCards(profileId: number): Promise<SrsState[]> {
+    return db
+      .select()
+      .from(srsStates)
+      .where(
+        and(
+          eq(srsStates.profileId, profileId),
+          or(eq(srsStates.isPriority, true), gte(srsStates.lapses, 2))
+        )
+      )
+      .orderBy(desc(srsStates.lapses));
   }
 
   async getAllSrsStates(profileId: number): Promise<SrsState[]> {
@@ -277,6 +292,7 @@ class DatabaseStorage implements IStorage {
     masteredCards: number;
     totalCards: number;
     totalSessions: number;
+    weakCards: number;
     weakPoints: { tag: string; count: number }[];
     themeProgress: { themeId: string; total: number; mastered: number; due: number }[];
   }> {
@@ -327,11 +343,14 @@ class DatabaseStorage implements IStorage {
 
     const totalCards = await this.getMotherCardCount();
 
+    const weakCardCount = allStates.filter(s => s.isPriority || s.lapses >= 2).length;
+
     return {
       dueCards: dueStates.length,
       masteredCards: masteredStates.length,
       totalCards,
       totalSessions: sessionList.length,
+      weakCards: weakCardCount,
       weakPoints: weakPoints.slice(0, 5),
       themeProgress: Array.from(themeMap.entries()).map(([themeId, data]) => ({
         themeId,

@@ -15,6 +15,8 @@ import {
   Sparkles,
   Play,
   Settings,
+  AlertTriangle,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -40,6 +42,7 @@ interface Stats {
   masteredCards: number;
   totalCards: number;
   totalSessions: number;
+  weakCards: number;
   weakPoints: { tag: string; count: number }[];
   themeProgress: { themeId: string; total: number; mastered: number; due: number }[];
 }
@@ -91,14 +94,15 @@ export default function Home() {
   });
 
   const startSession = useMutation({
-    mutationFn: async (params?: { themeId?: string; subthemeId?: string }) => {
+    mutationFn: async (params?: { themeId?: string; subthemeId?: string; mode?: string }) => {
       const res = await apiRequest("POST", "/api/sessions", { profileId: profile.id });
       const session = await res.json();
       return { session, ...params };
     },
-    onSuccess: ({ session, themeId, subthemeId }) => {
+    onSuccess: ({ session, themeId, subthemeId, mode: sessionMode }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
       let url = `/session?sessionId=${session.id}&profileId=${profile.id}`;
+      if (sessionMode) url += `&mode=${sessionMode}`;
       if (themeId) url += `&themeId=${themeId}`;
       if (subthemeId) url += `&subthemeId=${subthemeId}`;
       navigate(url);
@@ -119,6 +123,7 @@ export default function Home() {
   const dueCards = stats?.dueCards || 0;
   const masteredCards = stats?.masteredCards || 0;
   const totalCards = stats?.totalCards || 0;
+  const weakCards = stats?.weakCards || 0;
 
   const getThemeProgress = (themeId: string) => {
     const tp = stats?.themeProgress?.find(t => t.themeId === themeId);
@@ -200,6 +205,45 @@ export default function Home() {
           <MiniStat label="Maitrisees" value={masteredCards} color="text-green-500" />
           <MiniStat label="Total" value={totalCards} color="text-primary" />
         </div>
+
+        {weakCards > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -5 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <Card
+              className={`border-orange-500/30 bg-orange-500/5 hover-elevate ${startSession.isPending ? "pointer-events-none opacity-60" : "cursor-pointer"}`}
+              onClick={() => !startSession.isPending && startSession.mutate({ mode: "review" })}
+              data-testid="card-weak-cards"
+            >
+              <CardContent className="p-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-md bg-orange-500/10 flex items-center justify-center flex-shrink-0">
+                    <RotateCcw className="w-4.5 h-4.5 text-orange-500" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-sm">Points faibles</p>
+                    <p className="text-xs text-muted-foreground">{weakCards} carte{weakCards > 1 ? "s" : ""} en difficulte</p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-orange-500/30 text-orange-500"
+                  disabled={startSession.isPending}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startSession.mutate({ mode: "review" });
+                  }}
+                  data-testid="button-review-weak"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                  Reviser
+                </Button>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
 
         <div>
           <div className="flex items-center justify-between gap-2 mb-2">
