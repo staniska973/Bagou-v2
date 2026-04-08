@@ -7,13 +7,17 @@ import {
   ChevronRight,
   ArrowLeft,
   CheckCircle,
-  XCircle,
   Loader2,
-  AlertTriangle,
-  ChevronDown,
   RotateCcw,
   Mic,
   MicOff,
+  MessageCircle,
+  Lightbulb,
+  ChevronDown,
+  User,
+  ThumbsUp,
+  ThumbsDown,
+  Minus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,7 +25,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useAppStore } from "@/lib/store";
-import { getTranslations } from "@/lib/i18n";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -47,21 +50,18 @@ interface FlashcardData {
   srsState?: any;
 }
 
-interface FeedbackData {
+interface DialogueMessage {
+  role: "user" | "assistant";
+  content: string;
+  coachWhisper?: string;
+  isFinal?: boolean;
+}
+
+interface FinalFeedback {
   modelAnswer: string;
-  variants: {
-    safe: string;
-    medium: string;
-    bold: string;
-  };
-  rubric: string[];
-  feedback: {
-    pass: boolean;
-    ratingSuggested: "hard" | "medium" | "easy";
-    oneFix: string;
-    redoPrompt: string;
-    feedback: string;
-  };
+  variants: { safe: string; medium: string; bold: string };
+  rating: "hard" | "medium" | "easy";
+  feedback: string;
 }
 
 export default function Session() {
@@ -75,7 +75,6 @@ export default function Session() {
   const mode = params.get("mode");
   const { language } = useAppStore();
   const { user } = useAuth();
-  const t = getTranslations(language);
 
   const { data: profile } = useQuery({
     queryKey: ["/api/profiles/user", user?.id],
@@ -93,16 +92,22 @@ export default function Session() {
 
   const [cardQueue, setCardQueue] = useState<FlashcardData[]>([]);
   const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
-  const [userAnswer, setUserAnswer] = useState("");
-  const [feedbackData, setFeedbackData] = useState<FeedbackData | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [sessionDone, setSessionDone] = useState(false);
   const [cardsCompleted, setCardsCompleted] = useState(0);
   const [cardsFailed, setCardsFailed] = useState(0);
-  const [sessionDone, setSessionDone] = useState(false);
+
+  const [dialogueHistory, setDialogueHistory] = useState<DialogueMessage[]>([]);
+  const [turnNumber, setTurnNumber] = useState(1);
+  const [maxTurns, setMaxTurns] = useState(3);
+  const [isWaiting, setIsWaiting] = useState(false);
+  const [finalFeedback, setFinalFeedback] = useState<FinalFeedback | null>(null);
   const [showVariants, setShowVariants] = useState(false);
-  const [isRetry, setIsRetry] = useState(false);
+  const [userInput, setUserInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [isRating, setIsRating] = useState(false);
+
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   let dueUrl = `/api/flashcards/due/${profileId}`;
@@ -129,75 +134,110 @@ export default function Session() {
     }
   }, [dueCards]);
 
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [dialogueHistory, isWaiting, finalFeedback]);
+
   const currentCard = cardQueue[currentQueueIndex];
   const totalOriginal = dueCards?.length || 0;
 
-  const submitAnswer = async () => {
-    if (!userAnswer.trim() || !currentCard || !profileId) return;
+  const sendMessage = async () => {
+    if (!userInput.trim() || !currentCard || !profileId || isWaiting) return;
 
-    setIsSubmitting(true);
+    const message = userInput.trim();
+    setUserInput("");
+
+    const newUserMessage: DialogueMessage = { role: "user", content: message };
+    const historyForApi = [
+      ...dialogueHistory.map((m) => ({ role: m.role, content: m.content })),
+    ];
+    const newHistory = [...dialogueHistory, newUserMessage];
+    setDialogueHistory(newHistory);
+    setIsWaiting(true);
+
     try {
-      const res = await apiRequest("POST", "/api/flashcards/generate-answer", {
+      const res = await apiRequest("POST", "/api/session/dialogue-turn", {
         profileId,
         cardId: currentCard.card.cardId,
-        userAnswer: userAnswer.trim(),
+        history: historyForApi,
+        userMessage: message,
+        turnNumber,
       });
-      const data: FeedbackData = await res.json();
-      setFeedbackData(data);
+      const data = await res.json();
 
-      const rating = data.feedback.ratingSuggested;
-      await apiRequest("POST", "/api/flashcards/rate", {
-        profileId,
-        sessionId: sessionId ? parseInt(sessionId) : null,
-        cardId: currentCard.card.cardId,
-        rating,
-        userAnswer: userAnswer.trim(),
-      });
+      if (data.maxTurns && data.maxTurns !== maxTurns) {
+        setMaxTurns(data.maxTurns);
+      }
 
-      if (data.feedback.pass) {
-        setCardsCompleted((prev) => prev + 1);
+      const aiMessage: DialogueMessage = {
+        role: "assistant",
+        content: data.interlocutorReply,
+        coachWhisper: data.coachWhisper,
+        isFinal: data.isFinal,
+      };
+
+      setDialogueHistory((prev) => [...prev, aiMessage]);
+
+      if (data.isFinal && data.finalFeedback) {
+        setFinalFeedback(data.finalFeedback);
       } else {
-        setCardsFailed((prev) => prev + 1);
+        setTurnNumber((prev) => prev + 1);
       }
     } catch (error) {
-      console.error("Error submitting answer:", error);
+      console.error("Error sending message:", error);
     } finally {
-      setIsSubmitting(false);
+      setIsWaiting(false);
     }
-  };
-
-  const nextCard = () => {
-    const failed = feedbackData && !feedbackData.feedback.pass;
-    const shouldRequeue = failed && !isRetry;
-
-    if (shouldRequeue) {
-      setCardQueue((prev) => [...prev, currentCard]);
-    }
-
-    const nextIdx = currentQueueIndex + 1;
-    const queueLength = cardQueue.length + (shouldRequeue ? 1 : 0);
-
-    if (nextIdx < queueLength) {
-      setCurrentQueueIndex(nextIdx);
-      setUserAnswer("");
-      setFeedbackData(null);
-      setShowVariants(false);
-      setIsRetry(nextIdx >= totalOriginal);
-    } else {
-      setSessionDone(true);
-    }
-  };
-
-  const handleFinish = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/flashcards/due"] });
-    navigate("/");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      submitAnswer();
+      sendMessage();
+    }
+  };
+
+  const rateCard = async (rating: "hard" | "medium" | "easy") => {
+    if (!currentCard || !profileId || isRating) return;
+    setIsRating(true);
+
+    try {
+      await apiRequest("POST", "/api/flashcards/rate", {
+        profileId,
+        sessionId: sessionId ? parseInt(sessionId) : null,
+        cardId: currentCard.card.cardId,
+        rating,
+        userAnswer: dialogueHistory.find((m) => m.role === "user")?.content || "",
+      });
+
+      if (rating === "hard") {
+        setCardsFailed((prev) => prev + 1);
+      } else {
+        setCardsCompleted((prev) => prev + 1);
+      }
+
+      const shouldRequeue = rating === "hard";
+      const nextIdx = currentQueueIndex + 1;
+
+      setDialogueHistory([]);
+      setTurnNumber(1);
+      setFinalFeedback(null);
+      setShowVariants(false);
+
+      if (shouldRequeue) {
+        setCardQueue((prev) => [...prev, currentCard]);
+      }
+
+      const totalAfter = cardQueue.length + (shouldRequeue ? 1 : 0);
+      if (nextIdx < totalAfter) {
+        setCurrentQueueIndex(nextIdx);
+      } else {
+        setSessionDone(true);
+      }
+    } catch (error) {
+      console.error("Error rating card:", error);
+    } finally {
+      setIsRating(false);
     }
   };
 
@@ -226,7 +266,7 @@ export default function Session() {
           if (res.ok) {
             const { text } = await res.json();
             if (text) {
-              setUserAnswer((prev) => (prev ? prev + " " + text : text));
+              setUserInput((prev) => (prev ? prev + " " + text : text));
             }
           }
         } catch (err) {
@@ -246,6 +286,12 @@ export default function Session() {
     if (mediaRecorder && mediaRecorder.state === "recording") {
       mediaRecorder.stop();
     }
+  };
+
+  const handleFinish = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/flashcards/due"] });
+    navigate("/");
   };
 
   useEffect(() => {
@@ -281,20 +327,20 @@ export default function Session() {
             <CardContent className="p-6">
               <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
               <h2 className="text-xl font-bold mb-1" data-testid="text-session-complete">
-                {sessionDone ? "Session terminée" : "Aucune carte à réviser"}
+                {sessionDone ? "Session terminée !" : "Aucune situation à réviser"}
               </h2>
               <p className="text-sm text-muted-foreground mb-2">
                 {sessionDone
-                  ? `${cardsCompleted} carte${cardsCompleted > 1 ? "s" : ""} validée${cardsCompleted > 1 ? "s" : ""}`
-                  : "Revenez plus tard pour de nouvelles cartes"}
+                  ? `${cardsCompleted} situation${cardsCompleted > 1 ? "s" : ""} maîtrisée${cardsCompleted > 1 ? "s" : ""}`
+                  : "Revenez plus tard pour de nouvelles situations"}
               </p>
               {cardsFailed > 0 && sessionDone && (
                 <p className="text-xs text-orange-500 mb-4">
-                  {cardsFailed} carte{cardsFailed > 1 ? "s" : ""} à retravailler
+                  {cardsFailed} situation{cardsFailed > 1 ? "s" : ""} à retravailler
                 </p>
               )}
               <Button onClick={handleFinish} className="w-full" data-testid="button-finish-session">
-                Retour
+                Retour à l'accueil
               </Button>
             </CardContent>
           </Card>
@@ -307,9 +353,11 @@ export default function Session() {
     ? Math.min((currentQueueIndex / totalOriginal) * 100, 100)
     : 0;
 
+  const isInputDisabled = isWaiting || !!finalFeedback;
+
   return (
     <div className="h-dvh flex flex-col bg-background">
-      <div className="flex-shrink-0 border-b px-3 py-2 safe-area-top">
+      <div className="flex-shrink-0 border-b px-3 py-2">
         <div className="max-w-lg mx-auto flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={handleFinish} data-testid="button-back-home">
             <ArrowLeft className="w-5 h-5" />
@@ -323,194 +371,262 @@ export default function Session() {
                   {subthemeId ? ` / ${subthemeId}` : ""}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5">
-                {isRetry && (
-                  <Badge variant="secondary" className="text-[10px]">
-                    <RotateCcw className="w-2.5 h-2.5 mr-0.5" />
-                    Rattrapage
-                  </Badge>
-                )}
-                <span className="text-xs text-muted-foreground">
-                  {Math.min(currentQueueIndex + 1, cardQueue.length)}/{cardQueue.length}
-                </span>
-              </div>
+              <span className="text-xs text-muted-foreground">
+                {Math.min(currentQueueIndex + 1, cardQueue.length)}/{cardQueue.length}
+              </span>
             </div>
             <Progress value={progressPercent} className="h-1" />
           </div>
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col overflow-hidden max-w-lg mx-auto w-full">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={`${currentCard?.card.cardId}-${currentQueueIndex}`}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.15 }}
-            className="flex-1 flex flex-col overflow-hidden"
-          >
-            {currentCard && !feedbackData && (
-              <div className="flex-1 flex flex-col p-3 gap-3">
-                <Card className="flex-shrink-0">
-                  <CardContent className="p-4">
-                    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={`card-${currentQueueIndex}`}
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -20 }}
+          transition={{ duration: 0.15 }}
+          className="flex-1 flex flex-col overflow-hidden max-w-lg mx-auto w-full"
+        >
+          {currentCard && (
+            <>
+              <div className="flex-shrink-0 px-3 pt-3">
+                <Card className="bg-primary/5 border-primary/20">
+                  <CardContent className="p-3">
+                    <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
                       <Badge variant="secondary" className="text-[10px]" data-testid="badge-theme">
                         {currentCard.card.themeId}
                       </Badge>
                       <Badge variant="outline" className="text-[10px]" data-testid="badge-difficulty">
                         {currentCard.card.difficulty === "n1" ? "Facile" : currentCard.card.difficulty === "n2" ? "Moyen" : "Difficile"}
                       </Badge>
-                      {isRetry && (
-                        <Badge variant="destructive" className="text-[10px]">
-                          <RotateCcw className="w-2.5 h-2.5 mr-0.5" />
-                          2e essai
-                        </Badge>
-                      )}
+                      <div className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <MessageCircle className="w-3 h-3" />
+                        Tour {Math.min(turnNumber, maxTurns)}/{maxTurns}
+                      </div>
                     </div>
-                    <p className="text-sm leading-relaxed" data-testid="text-situation">
+                    <p className="text-sm leading-relaxed font-medium" data-testid="text-situation">
                       {currentCard.card.situation}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      <span className="font-medium">Objectif :</span> {currentCard.card.userGoal}
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <div className="flex-1 flex flex-col min-h-0">
-                  <Card className="flex-1 flex flex-col">
-                    <CardContent className="p-3 flex-1 flex flex-col">
-                      <Textarea
-                        ref={textareaRef}
-                        placeholder="Votre réponse (1-2 phrases max)..."
-                        value={userAnswer}
-                        onChange={(e) => setUserAnswer(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        className="flex-1 resize-none border-0 text-sm focus-visible:ring-0"
-                        disabled={isSubmitting}
-                        data-testid="textarea-answer"
-                      />
-                      <div className="flex items-center justify-between gap-2 mt-2">
-                        <Button
-                          variant={isRecording ? "destructive" : "outline"}
-                          size="icon"
-                          onClick={isRecording ? stopRecording : startRecording}
-                          disabled={isSubmitting}
-                          data-testid="button-voice"
-                        >
-                          {isRecording ? (
-                            <MicOff className="w-4 h-4" />
-                          ) : (
-                            <Mic className="w-4 h-4" />
-                          )}
-                        </Button>
-                        <Button
-                          onClick={submitAnswer}
-                          disabled={!userAnswer.trim() || isSubmitting}
-                          size="sm"
-                          data-testid="button-submit-answer"
-                        >
-                          {isSubmitting ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                              Évaluation...
-                            </>
-                          ) : (
-                            <>
-                              <Send className="w-3.5 h-3.5 mr-1.5" />
-                              Envoyer
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              </div>
-            )}
-
-            {currentCard && feedbackData && (
-              <div className="flex-1 flex flex-col p-3 gap-2 overflow-y-auto">
-                <Card className={`flex-shrink-0 ${feedbackData.feedback.pass ? "border-green-500/30" : "border-destructive/30"}`}>
-                  <CardContent className="p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      {feedbackData.feedback.pass ? (
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                      ) : (
-                        <XCircle className="w-4 h-4 text-destructive" />
-                      )}
-                      <span className="font-semibold text-sm" data-testid="text-verdict">
-                        {feedbackData.feedback.pass ? "Bien joué" : "À retravailler"}
+                    <div className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
+                      <span>
+                        <span className="font-medium">Toi</span> ({currentCard.card.speakerRole})
+                        {" → "}
+                        <span className="font-medium">{currentCard.card.otherRole}</span>
                       </span>
-                      <Badge
-                        variant={feedbackData.feedback.ratingSuggested === "easy" ? "default" : feedbackData.feedback.ratingSuggested === "medium" ? "secondary" : "destructive"}
-                        className="ml-auto text-[10px]"
-                        data-testid="badge-rating"
-                      >
-                        {feedbackData.feedback.ratingSuggested === "easy" ? "Maîtrisé" : feedbackData.feedback.ratingSuggested === "medium" ? "Correct" : "Difficile"}
-                      </Badge>
                     </div>
-                    <p className="text-xs" data-testid="text-feedback">{feedbackData.feedback.feedback}</p>
-                    {!feedbackData.feedback.pass && (
-                      <div className="bg-orange-500/10 rounded-md p-2 text-xs mt-2">
-                        <p className="font-medium text-[10px] text-orange-600 dark:text-orange-400 mb-0.5">
-                          <RotateCcw className="w-2.5 h-2.5 inline mr-0.5" />
-                          Cette carte reviendra en fin de session
-                        </p>
-                      </div>
-                    )}
-                    {feedbackData.feedback.oneFix && (
-                      <div className="bg-muted/50 rounded-md p-2 text-xs mt-2">
-                        <p className="font-medium text-[10px] text-muted-foreground mb-0.5">Conseil</p>
-                        <p data-testid="text-onefix">{feedbackData.feedback.oneFix}</p>
-                      </div>
-                    )}
                   </CardContent>
                 </Card>
-
-                <Card className="flex-shrink-0">
-                  <CardContent className="p-3">
-                    <p className="font-medium text-xs text-muted-foreground mb-1">Réponse modèle</p>
-                    <p className="text-sm leading-relaxed" data-testid="text-model-answer">{feedbackData.modelAnswer}</p>
-
-                    <button
-                      className="flex items-center gap-1 text-xs text-muted-foreground mt-2 cursor-pointer"
-                      onClick={() => setShowVariants(!showVariants)}
-                      data-testid="button-toggle-variants"
-                    >
-                      <ChevronDown className={`w-3 h-3 transition-transform ${showVariants ? "rotate-180" : ""}`} />
-                      3 variantes
-                    </button>
-
-                    {showVariants && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        className="space-y-2 mt-2 overflow-hidden"
-                      >
-                        <VariantRow label="Prudente" text={feedbackData.variants.safe} testId="text-variant-safe" />
-                        <VariantRow label="Équilibrée" text={feedbackData.variants.medium} testId="text-variant-medium" />
-                        <VariantRow label="Audacieuse" text={feedbackData.variants.bold} testId="text-variant-bold" />
-                      </motion.div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Button onClick={nextCard} className="w-full flex-shrink-0" data-testid="button-next-card">
-                  {currentQueueIndex < cardQueue.length - 1 || (feedbackData && !feedbackData.feedback.pass && !isRetry) ? (
-                    <>
-                      Suivante
-                      <ChevronRight className="w-4 h-4 ml-1" />
-                    </>
-                  ) : (
-                    "Terminer"
-                  )}
-                </Button>
               </div>
-            )}
-          </motion.div>
-        </AnimatePresence>
-      </div>
+
+              <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
+                {dialogueHistory.length === 0 && (
+                  <div className="text-center text-muted-foreground text-xs py-6">
+                    <p className="mb-1">Objectif : <span className="font-medium text-foreground">{currentCard.card.userGoal}</span></p>
+                    <p>Tape ta première réplique ci-dessous</p>
+                  </div>
+                )}
+
+                {dialogueHistory.map((msg, idx) => (
+                  <motion.div
+                    key={idx}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className={`flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}
+                  >
+                    {msg.role === "user" ? (
+                      <div className="flex items-end gap-2 max-w-[85%]">
+                        <div className="bg-primary text-primary-foreground rounded-2xl rounded-br-sm px-3 py-2 text-sm" data-testid={`bubble-user-${idx}`}>
+                          {msg.content}
+                        </div>
+                        <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                          <User className="w-3 h-3 text-primary" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-end gap-2 max-w-[85%]">
+                        <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                          <MessageCircle className="w-3 h-3 text-muted-foreground" />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="text-[10px] text-muted-foreground font-medium ml-1">
+                            {currentCard.card.otherRole}
+                          </div>
+                          <div className={`rounded-2xl rounded-bl-sm px-3 py-2 text-sm ${msg.isFinal ? "bg-muted/80" : "bg-muted"}`} data-testid={`bubble-ai-${idx}`}>
+                            {msg.content}
+                          </div>
+                          {msg.coachWhisper && (
+                            <motion.div
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              className="flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 ml-1"
+                              data-testid={`coach-whisper-${idx}`}
+                            >
+                              <Lightbulb className="w-3 h-3 text-amber-500 flex-shrink-0 mt-0.5" />
+                              <p className="text-[11px] text-amber-700 dark:text-amber-400 italic">{msg.coachWhisper}</p>
+                            </motion.div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                ))}
+
+                {isWaiting && (
+                  <div className="flex items-end gap-2">
+                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                      <MessageCircle className="w-3 h-3 text-muted-foreground" />
+                    </div>
+                    <div className="bg-muted rounded-2xl rounded-bl-sm px-3 py-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                    </div>
+                  </div>
+                )}
+
+                {finalFeedback && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="space-y-3 pt-2"
+                    data-testid="section-final-feedback"
+                  >
+                    <div className="border-t pt-3 text-center">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Bilan de l'échange</p>
+                    </div>
+
+                    <Card className={`${finalFeedback.rating === "hard" ? "border-destructive/40" : finalFeedback.rating === "easy" ? "border-green-500/40" : "border-amber-500/40"}`}>
+                      <CardContent className="p-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={finalFeedback.rating === "easy" ? "default" : finalFeedback.rating === "medium" ? "secondary" : "destructive"}
+                            className="text-[10px]"
+                            data-testid="badge-final-rating"
+                          >
+                            {finalFeedback.rating === "easy" ? "Maîtrisé" : finalFeedback.rating === "medium" ? "Correct" : "À retravailler"}
+                          </Badge>
+                        </div>
+                        <p className="text-sm" data-testid="text-final-feedback">{finalFeedback.feedback}</p>
+
+                        <div className="bg-muted/50 rounded-lg p-2.5">
+                          <p className="text-[10px] font-medium text-muted-foreground mb-1">Réponse idéale (1er échange)</p>
+                          <p className="text-sm font-medium" data-testid="text-model-answer">{finalFeedback.modelAnswer}</p>
+                        </div>
+
+                        <button
+                          className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer"
+                          onClick={() => setShowVariants(!showVariants)}
+                          data-testid="button-toggle-variants"
+                        >
+                          <ChevronDown className={`w-3 h-3 transition-transform ${showVariants ? "rotate-180" : ""}`} />
+                          3 variantes
+                        </button>
+
+                        {showVariants && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            className="space-y-1.5 overflow-hidden"
+                          >
+                            <VariantRow label="Prudente" text={finalFeedback.variants.safe} testId="text-variant-safe" />
+                            <VariantRow label="Équilibrée" text={finalFeedback.variants.medium} testId="text-variant-medium" />
+                            <VariantRow label="Audacieuse" text={finalFeedback.variants.bold} testId="text-variant-bold" />
+                          </motion.div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <div className="space-y-2">
+                      <p className="text-xs text-center text-muted-foreground">Comment tu as géré cet échange ?</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => rateCard("hard")}
+                          disabled={isRating}
+                          className="border-destructive/40 text-destructive hover:bg-destructive/10 flex flex-col h-auto py-2 gap-1"
+                          data-testid="button-rate-hard"
+                        >
+                          <ThumbsDown className="w-4 h-4" />
+                          <span className="text-[10px]">Difficile</span>
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => rateCard("medium")}
+                          disabled={isRating}
+                          className="border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 flex flex-col h-auto py-2 gap-1"
+                          data-testid="button-rate-medium"
+                        >
+                          <Minus className="w-4 h-4" />
+                          <span className="text-[10px]">Moyen</span>
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => rateCard("easy")}
+                          disabled={isRating}
+                          className="border-green-500/40 text-green-600 dark:text-green-400 hover:bg-green-500/10 flex flex-col h-auto py-2 gap-1"
+                          data-testid="button-rate-easy"
+                        >
+                          <ThumbsUp className="w-4 h-4" />
+                          <span className="text-[10px]">Maîtrisé</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+
+                <div ref={chatEndRef} />
+              </div>
+
+              {!finalFeedback && (
+                <div className="flex-shrink-0 border-t px-3 py-2 bg-background">
+                  <div className="flex items-end gap-2">
+                    <Textarea
+                      ref={textareaRef}
+                      placeholder={turnNumber === 1 ? "Ta première réplique (1-2 phrases)..." : "Continue l'échange..."}
+                      value={userInput}
+                      onChange={(e) => setUserInput(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      className="flex-1 resize-none text-sm min-h-[60px] max-h-[120px]"
+                      disabled={isInputDisabled}
+                      rows={2}
+                      data-testid="textarea-answer"
+                    />
+                    <div className="flex flex-col gap-1.5">
+                      <Button
+                        variant={isRecording ? "destructive" : "outline"}
+                        size="icon"
+                        className="w-9 h-9"
+                        onClick={isRecording ? stopRecording : startRecording}
+                        disabled={isInputDisabled}
+                        data-testid="button-voice"
+                      >
+                        {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                      </Button>
+                      <Button
+                        size="icon"
+                        className="w-9 h-9"
+                        onClick={sendMessage}
+                        disabled={!userInput.trim() || isInputDisabled}
+                        data-testid="button-submit-answer"
+                      >
+                        {isWaiting ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }

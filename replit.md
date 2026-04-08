@@ -5,10 +5,13 @@
 Bagou is a daily communication reflex coach that trains assertiveness and verbal fluency through active recall flashcards and AI-powered roleplay scenarios. The application uses a spaced repetition system (SRS) to optimize learning, requiring users to write or speak their responses before seeing model answers.
 
 **Core Features:**
-- Bilingual support (French primary, English secondary) with i18n architecture
-- Daily training sessions (default 12 minutes) with flashcards → roleplay → debrief flow
+- Fully French app (UI, prompts, coaching style — direct/provocateur)
+- Mini-dialogue session flow: 3-turn chat per card situation (configurable 2–5 by admin)
+- AI plays dual role per turn: Interlocutor (realistic) + Coach Bagou (whisper advice)
+- Final turn generates: model answer, 3 variants (safe/medium/bold), evaluation, feedback
+- Manual SRS rating after each dialogue: Difficile / Moyen / Maîtrisé
 - SRS scheduling (Anki-style SM-2 algorithm) for optimal card review timing
-- AI-powered model answer generation, scoring, and feedback
+- Admin panel: card editing, AI model selection, dialogue turn count, subscription management
 - User profile customization (tone, risk level, communication preferences)
 
 ## User Preferences

@@ -3,6 +3,13 @@ import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, seria
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+export const adminSettings = pgTable("admin_settings", {
+  id: serial("id").primaryKey(),
+  key: varchar("key", { length: 100 }).notNull().unique(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 export const languageEnum = ["fr", "en", "es"] as const;
 export const modeEnum = ["text", "voice", "mixed"] as const;
 export const channelEnum = ["text", "irl", "voice"] as const;

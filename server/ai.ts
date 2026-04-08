@@ -21,7 +21,7 @@ const SCORING_PROVIDER = (process.env.SCORING_MODEL || "gemini") as "gpt" | "gem
 const GENERATION_PROVIDER = (process.env.GENERATION_MODEL || "gpt") as "gpt" | "gemini";
 const TEMPERATURE = 0.85;
 
-const BAGOU_SYSTEM = `Tu es le coach Bagou. Philosophie :
+const BASE_BAGOU_SYSTEM = `Tu es le coach Bagou. Philosophie :
 - RÉFLEXE, pas monologue. Chaque réponse = 1 à 2 phrases MAX. Percutante. Tranchante.
 - On ne se justifie JAMAIS. On ne s'excuse pas d'exister.
 - Le silence est une arme. La concision est le pouvoir.
@@ -30,6 +30,35 @@ const BAGOU_SYSTEM = `Tu es le coach Bagou. Philosophie :
 - Pas de "je comprends que tu ressentes..." ni de formules thérapeutiques molles.
 - Style : comme les signatures Bagou → "On ne négocie pas le respect." / "On garde son cadre." / "On ne retient personne."
 - Langue : français exclusivement, registre courant/familier naturel (pas soutenu).`;
+
+export interface AIRuntimeConfig {
+  scoringProvider: "gpt" | "gemini";
+  generationProvider: "gpt" | "gemini";
+  bagouSystemExtra: string;
+  dialogueTurns: number;
+}
+
+let _runtimeConfig: AIRuntimeConfig = {
+  scoringProvider: SCORING_PROVIDER,
+  generationProvider: GENERATION_PROVIDER,
+  bagouSystemExtra: "",
+  dialogueTurns: 3,
+};
+
+export function updateAIRuntimeConfig(config: Partial<AIRuntimeConfig>) {
+  Object.assign(_runtimeConfig, config);
+}
+
+export function getAIRuntimeConfig(): AIRuntimeConfig {
+  return { ..._runtimeConfig };
+}
+
+function getBagouSystem(): string {
+  const extra = _runtimeConfig.bagouSystemExtra;
+  return extra ? `${BASE_BAGOU_SYSTEM}\n\n${extra}` : BASE_BAGOU_SYSTEM;
+}
+
+const BAGOU_SYSTEM = BASE_BAGOU_SYSTEM;
 
 interface FlashcardGenerationResponse {
   modelAnswer: string;
@@ -338,6 +367,111 @@ JSON:
       optimizedRewrite: "",
       redoExercise: "",
       scores: { clarity: 50, frame: 50, tone: 50, concision: 50 },
+    };
+  }
+}
+
+export interface CardDialogueTurnResponse {
+  interlocutorReply: string;
+  coachWhisper: string;
+  isFinal: boolean;
+  finalFeedback?: {
+    modelAnswer: string;
+    variants: { safe: string; medium: string; bold: string };
+    rating: "hard" | "medium" | "easy";
+    feedback: string;
+  };
+}
+
+export async function generateCardDialogueTurn(
+  profile: UserProfile,
+  card: MotherCard,
+  history: { role: "user" | "assistant"; content: string }[],
+  userMessage: string,
+  turnNumber: number,
+  maxTurns: number = 3
+): Promise<CardDialogueTurnResponse> {
+  const isFinal = turnNumber >= maxTurns;
+  const firstUserMessage = history.find((m) => m.role === "user")?.content || userMessage;
+
+  const systemPrompt = `${getBagouSystem()}
+
+Tu joues un double rôle dans cet exercice de communication :
+
+1. INTERLOCUTEUR : Tu es "${card.otherRole}" dans cette situation : "${card.situation}"
+   - Tu réagis naturellement et réalistement à ce que dit l'utilisateur
+   - Relation : ${card.relationship} | Enjeux : ${card.stakes}
+   - Ton : ni trop facile, ni agressif. Tu testes l'utilisateur de façon réaliste.
+   - 1-2 phrases maximum. Oral et naturel.
+
+2. COACH BAGOU (en parallèle) : 1 phrase ultra-concise pour aider l'utilisateur à progresser.
+   - Si bonne réponse : ce qui était fort
+   - Si à améliorer : l'une chose précise à changer
+   - Style Bagou direct, pas de blabla
+
+${isFinal ? `
+3. ÉVALUATION FINALE : C'est le dernier tour. Génère aussi :
+   - modelAnswer : La réponse idéale à la toute première réplique de l'utilisateur (1-2 phrases, style Bagou)
+   - variants : 3 versions (safe/medium/bold) de cette réponse modèle
+   - rating : "easy" si l'ensemble de l'échange était maîtrisé, "medium" si correct mais perfectible, "hard" si l'utilisateur s'est justifié/excusé ou a raté l'objectif
+   - feedback : 1 phrase de bilan sur l'ensemble de l'échange
+
+Première réponse de l'utilisateur à évaluer : "${firstUserMessage}"
+Objectif de la carte : ${card.userGoal}
+À éviter : ${card.antiPatterns?.join(", ") || "aucun"}
+` : ""}`;
+
+  const messages: OpenAI.ChatCompletionMessageParam[] = [
+    { role: "system", content: systemPrompt },
+    ...history.map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    })),
+    { role: "user", content: userMessage },
+  ];
+
+  const jsonSchema = isFinal
+    ? `{"interlocutorReply":"...","coachWhisper":"...","finalFeedback":{"modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."},"rating":"medium","feedback":"..."}}`
+    : `{"interlocutorReply":"...","coachWhisper":"..."}`;
+
+  messages[0].content += `\n\nRéponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
+
+  const start = Date.now();
+  console.log(`[AI] generateCardDialogueTurn: turn ${turnNumber}/${maxTurns}, isFinal=${isFinal}`);
+
+  const response = await openai.chat.completions.create({
+    model: GPT_MODEL,
+    messages,
+    response_format: { type: "json_object" },
+    max_completion_tokens: isFinal ? 500 : 250,
+    temperature: TEMPERATURE,
+  });
+
+  const elapsed = Date.now() - start;
+  const content = response.choices[0]?.message?.content || "{}";
+  console.log(`[AI] generateCardDialogueTurn: ${elapsed}ms`);
+
+  try {
+    const parsed = JSON.parse(content);
+    return {
+      interlocutorReply: parsed.interlocutorReply || "...",
+      coachWhisper: parsed.coachWhisper || "",
+      isFinal,
+      finalFeedback: isFinal && parsed.finalFeedback
+        ? {
+            modelAnswer: parsed.finalFeedback.modelAnswer || "",
+            variants: parsed.finalFeedback.variants || { safe: "", medium: "", bold: "" },
+            rating: parsed.finalFeedback.rating || "medium",
+            feedback: parsed.finalFeedback.feedback || "",
+          }
+        : undefined,
+    };
+  } catch (e) {
+    console.error("[AI] Failed to parse dialogue turn response:", content);
+    return {
+      interlocutorReply: "Je vois...",
+      coachWhisper: "Évaluation indisponible",
+      isFinal,
     };
   }
 }

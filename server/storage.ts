@@ -6,6 +6,7 @@ import {
   scenarios,
   trainingSessions,
   sessionEvents,
+  adminSettings,
   type UserProfile,
   type InsertUserProfile,
   type MotherCard,
@@ -35,8 +36,13 @@ export interface IStorage {
   getMotherCardCount(): Promise<number>;
   createMotherCard(data: InsertMotherCard): Promise<MotherCard>;
   createMotherCards(data: InsertMotherCard[]): Promise<MotherCard[]>;
+  updateMotherCard(cardId: string, data: Partial<InsertMotherCard>): Promise<MotherCard | undefined>;
   deleteMotherCard(cardId: string): Promise<void>;
   deleteMotherCardsBySubtheme(themeId: string, subthemeId: string): Promise<void>;
+
+  getAdminSetting(key: string): Promise<string | undefined>;
+  setAdminSetting(key: string, value: string): Promise<void>;
+  getAllAdminSettings(): Promise<Record<string, string>>;
 
   getSrsState(profileId: number, cardId: string): Promise<SrsState | undefined>;
   getDueCards(profileId: number, date: string): Promise<SrsState[]>;
@@ -142,6 +148,15 @@ class DatabaseStorage implements IStorage {
     return db.insert(motherCards).values(data).onConflictDoNothing({ target: motherCards.cardId }).returning();
   }
 
+  async updateMotherCard(cardId: string, data: Partial<InsertMotherCard>): Promise<MotherCard | undefined> {
+    const [card] = await db
+      .update(motherCards)
+      .set(data)
+      .where(eq(motherCards.cardId, cardId))
+      .returning();
+    return card;
+  }
+
   async deleteMotherCard(cardId: string): Promise<void> {
     await db.delete(motherCards).where(eq(motherCards.cardId, cardId));
   }
@@ -150,6 +165,23 @@ class DatabaseStorage implements IStorage {
     await db.delete(motherCards).where(
       and(eq(motherCards.themeId, themeId), eq(motherCards.subthemeId, subthemeId))
     );
+  }
+
+  async getAdminSetting(key: string): Promise<string | undefined> {
+    const [row] = await db.select().from(adminSettings).where(eq(adminSettings.key, key));
+    return row?.value;
+  }
+
+  async setAdminSetting(key: string, value: string): Promise<void> {
+    await db
+      .insert(adminSettings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: adminSettings.key, set: { value, updatedAt: new Date() } });
+  }
+
+  async getAllAdminSettings(): Promise<Record<string, string>> {
+    const rows = await db.select().from(adminSettings);
+    return Object.fromEntries(rows.map((r) => [r.key, r.value]));
   }
 
   async getSrsState(profileId: number, cardId: string): Promise<SrsState | undefined> {

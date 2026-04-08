@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief } from "./ai";
+import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateCardDialogueTurn, updateAIRuntimeConfig, getAIRuntimeConfig } from "./ai";
 import { speechToText, ensureCompatibleFormat } from "./replit_integrations/audio/client";
 import { insertUserProfileSchema, insertSessionEventSchema } from "@shared/schema";
 import { z } from "zod";
@@ -64,6 +64,15 @@ function addDays(date: string, days: number): string {
 }
 
 export async function registerRoutes(server: Server, app: Express): Promise<void> {
+  storage.getAllAdminSettings().then((settings) => {
+    updateAIRuntimeConfig({
+      scoringProvider: (settings.scoring_model || "gemini") as "gpt" | "gemini",
+      generationProvider: (settings.generation_model || "gpt") as "gpt" | "gemini",
+      bagouSystemExtra: settings.bagou_system_extra || "",
+      dialogueTurns: parseInt(settings.dialogue_turns || "3"),
+    });
+  }).catch(() => {});
+
   app.get("/api/profiles/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -642,6 +651,146 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     } catch (error) {
       console.error("Error deleting card:", error);
       res.status(500).json({ error: "Failed to delete card" });
+    }
+  });
+
+  app.patch("/api/admin/cards/:cardId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
+      if (!user?.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const card = await storage.updateMotherCard(req.params.cardId, req.body);
+      if (!card) {
+        return res.status(404).json({ error: "Card not found" });
+      }
+      res.json(card);
+    } catch (error) {
+      console.error("Error updating card:", error);
+      res.status(500).json({ error: "Failed to update card" });
+    }
+  });
+
+  app.get("/api/admin/settings", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
+      if (!user?.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const settings = await storage.getAllAdminSettings();
+      const current = getAIRuntimeConfig();
+      res.json({
+        scoring_model: settings.scoring_model || current.scoringProvider,
+        generation_model: settings.generation_model || current.generationProvider,
+        bagou_system_extra: settings.bagou_system_extra || "",
+        dialogue_turns: parseInt(settings.dialogue_turns || "3"),
+      });
+    } catch (error) {
+      console.error("Error fetching admin settings:", error);
+      res.status(500).json({ error: "Failed to fetch settings" });
+    }
+  });
+
+  app.patch("/api/admin/settings", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
+      if (!user?.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const { scoring_model, generation_model, bagou_system_extra, dialogue_turns } = req.body;
+
+      if (scoring_model) await storage.setAdminSetting("scoring_model", scoring_model);
+      if (generation_model) await storage.setAdminSetting("generation_model", generation_model);
+      if (bagou_system_extra !== undefined) await storage.setAdminSetting("bagou_system_extra", bagou_system_extra);
+      if (dialogue_turns !== undefined) await storage.setAdminSetting("dialogue_turns", String(dialogue_turns));
+
+      updateAIRuntimeConfig({
+        scoringProvider: (scoring_model || getAIRuntimeConfig().scoringProvider) as "gpt" | "gemini",
+        generationProvider: (generation_model || getAIRuntimeConfig().generationProvider) as "gpt" | "gemini",
+        bagouSystemExtra: bagou_system_extra !== undefined ? bagou_system_extra : getAIRuntimeConfig().bagouSystemExtra,
+        dialogueTurns: dialogue_turns !== undefined ? parseInt(dialogue_turns) : getAIRuntimeConfig().dialogueTurns,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error updating admin settings:", error);
+      res.status(500).json({ error: "Failed to update settings" });
+    }
+  });
+
+  app.patch("/api/admin/users/:id/subscription", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
+      if (!user?.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const { subscriptionStatus, subscriptionExpiresAt } = req.body;
+      const updateData: any = {};
+      if (subscriptionStatus) updateData.subscriptionStatus = subscriptionStatus;
+      if (subscriptionExpiresAt !== undefined) updateData.subscriptionExpiresAt = subscriptionExpiresAt ? new Date(subscriptionExpiresAt) : null;
+
+      const [updated] = await dbModule.update(users).set(updateData).where(eq(users.id, req.params.id)).returning();
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating subscription:", error);
+      res.status(500).json({ error: "Failed to update subscription" });
+    }
+  });
+
+  app.post("/api/session/dialogue-turn", async (req, res) => {
+    try {
+      const { profileId, cardId, history, userMessage, turnNumber } = req.body;
+
+      if (!profileId || !cardId || !userMessage) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+
+      const profile = await storage.getProfile(profileId);
+      if (!profile) {
+        return res.status(404).json({ error: "Profile not found" });
+      }
+
+      const card = await storage.getMotherCard(cardId);
+      if (!card) {
+        return res.status(404).json({ error: "Card not found" });
+      }
+
+      const settings = await storage.getAllAdminSettings();
+      const maxTurns = parseInt(settings.dialogue_turns || "3");
+
+      const result = await generateCardDialogueTurn(
+        profile,
+        card,
+        history || [],
+        userMessage,
+        turnNumber || 1,
+        maxTurns
+      );
+
+      res.json({ ...result, maxTurns });
+    } catch (error) {
+      console.error("Error generating dialogue turn:", error);
+      res.status(500).json({ error: "Failed to generate dialogue turn" });
     }
   });
 
