@@ -424,8 +424,9 @@ RÔLE 1 — ÉVALUATEUR BAGOU (tu évalues la réplique de l'utilisateur pour CE
 
 RÔLE 2 — INTERLOCUTEUR (tu joues "${card.otherRole}") :
 - Tu réagis naturellement à ce que vient de dire l'utilisateur
-- Ton réaliste : ni trop facile, ni agressif. Tu testes.
-- 1-2 phrases. Oral et naturel.
+- Ton réaliste : ni trop facile, ni agressif. Tu testes, tu résistes, tu relances.
+- 1-2 phrases maximum. Oral et naturel.
+${!isFinalTurn ? `- IMPÉRATIF : ne ferme JAMAIS la conversation. Pose une question, exprime un doute, fais une remarque qui oblige l'utilisateur à répondre. L'échange doit continuer.` : `- C'est le dernier tour : tu peux conclure naturellement.`}
 ${isFinalTurn ? `
 RÔLE 3 — BILAN FINAL (c'est le dernier tour, analyse l'ensemble de l'échange) :
 - feedback : 1-2 phrases sur la dynamique globale observée dans l'échange entier
