@@ -149,7 +149,6 @@ export default function Session() {
   const [turnNumber, setTurnNumber] = useState(1);
   const [maxTurns, setMaxTurns] = useState(3);
   const [globalDynamic, setGlobalDynamic] = useState<GlobalDynamic | null>(null);
-  const [showVariants, setShowVariants] = useState(false);
   const [isRating, setIsRating] = useState(false);
 
   const [userInput, setUserInput] = useState("");
@@ -228,10 +227,11 @@ export default function Session() {
     }
   };
 
-  const handleRewrite = () => {
+  const handleRewrite = (prefill?: string) => {
     setConvoHistory((prev) => prev.slice(0, -1));
     setPendingResult(null);
     setPhase("typing");
+    if (prefill !== undefined) setUserInput(prefill);
     setTimeout(() => textareaRef.current?.focus(), 50);
   };
 
@@ -260,7 +260,6 @@ export default function Session() {
     }
 
     setPendingResult(null);
-    setShowVariants(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -297,7 +296,6 @@ export default function Session() {
       setPendingResult(null);
       setGlobalDynamic(null);
       setPhase("typing");
-      setShowVariants(false);
 
       if (shouldRequeue) {
         setCardQueue((prev) => [...prev, currentCard]);
@@ -521,17 +519,9 @@ export default function Session() {
                             animate={{ opacity: 1, height: "auto" }}
                             className="w-full max-w-[90%] mr-8"
                           >
-                            <div className="bg-muted/40 border rounded-xl p-2.5 space-y-1.5 text-left">
-                              <div className="flex items-start gap-1.5 flex-wrap">
-                                <ScoreChip score={msg.eval.score} />
-                                <span className="text-xs text-muted-foreground leading-relaxed">{msg.eval.comment}</span>
-                              </div>
-                              {msg.eval.modelAnswer && (
-                                <div className="text-xs border-l-2 border-primary/30 pl-2">
-                                  <span className="text-muted-foreground">Idéal : </span>
-                                  <span className="font-medium">{msg.eval.modelAnswer}</span>
-                                </div>
-                              )}
+                            <div className="bg-muted/40 border rounded-xl px-2.5 py-1.5 text-left flex items-start gap-1.5 flex-wrap">
+                              <ScoreChip score={msg.eval.score} />
+                              <span className="text-xs text-muted-foreground leading-relaxed">{msg.eval.comment}</span>
                             </div>
                           </motion.div>
                         )}
@@ -569,76 +559,113 @@ export default function Session() {
                   </div>
                 )}
 
-                {phase === "reviewed" && pendingResult && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="space-y-2"
-                    data-testid="section-turn-eval"
-                  >
-                    <Card className="border-primary/20">
-                      <CardContent className="p-3 space-y-3">
-                        <div className="flex items-start gap-2 flex-wrap">
-                          <ScoreChip score={pendingResult.turnEval.score} />
-                          <p className="text-xs text-foreground leading-relaxed flex-1">
-                            {pendingResult.turnEval.comment}
-                          </p>
-                        </div>
+                {phase === "reviewed" && pendingResult && (() => {
+                  const score = pendingResult.turnEval.score;
+                  const variants = [
+                    { label: "Prudente", text: pendingResult.turnEval.variants.safe, testId: "button-variant-safe" },
+                    { label: "Équilibrée", text: pendingResult.turnEval.variants.medium, testId: "button-variant-medium" },
+                    { label: "Audacieuse", text: pendingResult.turnEval.variants.bold, testId: "button-variant-bold" },
+                  ];
 
-                        <div className="bg-muted/50 rounded-lg p-2.5 space-y-1.5">
-                          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                            <Lightbulb className="w-3 h-3" />
-                            Ce que tu aurais pu dire
-                          </p>
-                          <p className="text-sm font-medium leading-relaxed" data-testid="text-model-answer">
-                            {pendingResult.turnEval.modelAnswer}
-                          </p>
-                          <button
-                            className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5"
-                            onClick={() => setShowVariants(!showVariants)}
-                            data-testid="button-toggle-variants"
-                          >
-                            <ChevronDown className={`w-3 h-3 transition-transform ${showVariants ? "rotate-180" : ""}`} />
-                            3 variantes
-                          </button>
-                          {showVariants && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: "auto" }}
-                              className="space-y-1.5 overflow-hidden pt-1"
-                            >
-                              <VariantRow label="Prudente" text={pendingResult.turnEval.variants.safe} testId="text-variant-safe" />
-                              <VariantRow label="Équilibrée" text={pendingResult.turnEval.variants.medium} testId="text-variant-medium" />
-                              <VariantRow label="Audacieuse" text={pendingResult.turnEval.variants.bold} testId="text-variant-bold" />
-                            </motion.div>
+                  return (
+                    <motion.div
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="space-y-2"
+                      data-testid="section-turn-eval"
+                    >
+                      <Card className={`border-2 ${score === "strong" ? "border-green-500/30" : score === "weak" ? "border-red-500/30" : "border-amber-500/30"}`}>
+                        <CardContent className="p-3 space-y-3">
+                          <div className="flex items-start gap-2 flex-wrap">
+                            <ScoreChip score={score} />
+                            <p className="text-xs text-foreground leading-relaxed flex-1">
+                              {pendingResult.turnEval.comment}
+                            </p>
+                          </div>
+
+                          {score !== "strong" && (
+                            <div className="space-y-2">
+                              <div className="bg-muted/50 rounded-lg p-2.5">
+                                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1 mb-1.5">
+                                  <Lightbulb className="w-3 h-3" />
+                                  {score === "weak" ? "Choisis une réplique à réécrire" : "Ce que tu aurais pu dire"}
+                                </p>
+                                <button
+                                  className="text-sm font-medium leading-relaxed text-left w-full hover:text-primary transition-colors"
+                                  onClick={() => handleRewrite(pendingResult.turnEval.modelAnswer)}
+                                  data-testid="button-use-model-answer"
+                                >
+                                  {pendingResult.turnEval.modelAnswer}
+                                </button>
+                              </div>
+
+                              <div className="space-y-1.5">
+                                {variants.map((v) => (
+                                  <button
+                                    key={v.label}
+                                    className="w-full text-left text-xs border rounded-lg px-2.5 py-2 hover:bg-muted/60 transition-colors"
+                                    onClick={() => handleRewrite(v.text)}
+                                    data-testid={v.testId}
+                                  >
+                                    <span className="font-semibold text-muted-foreground">{v.label} : </span>
+                                    {v.text}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
                           )}
-                        </div>
 
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="flex-1 text-xs h-9 gap-1.5"
-                            onClick={handleRewrite}
-                            data-testid="button-rewrite"
-                          >
-                            <RotateCcw className="w-3 h-3" />
-                            Réécrire
-                          </Button>
-                          <Button
-                            size="sm"
-                            className="flex-1 text-xs h-9 gap-1.5"
-                            onClick={handleContinue}
-                            data-testid="button-continue"
-                          >
-                            Continuer
-                            <ChevronRight className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </motion.div>
-                )}
+                          <div className="flex gap-2">
+                            {score === "weak" ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="flex-1 text-xs h-9 gap-1.5"
+                                onClick={() => handleRewrite()}
+                                data-testid="button-rewrite"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                Réécrire librement
+                              </Button>
+                            ) : score === "ok" ? (
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="flex-1 text-xs h-9 gap-1.5"
+                                  onClick={() => handleRewrite()}
+                                  data-testid="button-rewrite"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  Réécrire
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  className="flex-1 text-xs h-9 gap-1.5"
+                                  onClick={handleContinue}
+                                  data-testid="button-continue"
+                                >
+                                  Continuer
+                                  <ChevronRight className="w-3 h-3" />
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                size="sm"
+                                className="flex-1 text-xs h-9 gap-1.5"
+                                onClick={handleContinue}
+                                data-testid="button-continue"
+                              >
+                                Continuer
+                                <ChevronRight className="w-3 h-3" />
+                              </Button>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </motion.div>
+                  );
+                })()}
 
                 {phase === "globalFeedback" && (
                   <motion.div
