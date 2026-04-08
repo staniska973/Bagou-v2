@@ -673,3 +673,81 @@ export async function generateAllCards(
 
   return progress;
 }
+
+export async function generateCardsForPreview(
+  themeId: string,
+  themeLabel: string,
+  subthemeId: string,
+  subthemeLabel: string,
+  subthemeIntents: string[],
+  subthemeExamples: string[],
+  count: number
+): Promise<InsertMotherCard[]> {
+  const theme: ThemeConfig = {
+    id: themeId,
+    label: themeLabel,
+    subthemes: [{
+      id: subthemeId,
+      label: subthemeLabel,
+      intents: subthemeIntents.length > 0 ? subthemeIntents : ["open", "respond", "close"],
+      exampleSituations: subthemeExamples,
+    }],
+  };
+  const subtheme = theme.subthemes[0];
+  const cardIdPrefix = buildCardIdPrefix(themeId, subthemeId);
+  const packId = buildPackId(themeId, subthemeId);
+
+  const totalBatches = Math.ceil(count / BATCH_SIZE);
+  const allCards: InsertMotherCard[] = [];
+
+  for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+    const batchSize = Math.min(BATCH_SIZE, count - batchIdx * BATCH_SIZE);
+    const startNum = batchIdx * BATCH_SIZE + 1;
+
+    try {
+      const partialCards = await generateBatch(theme, subtheme, batchIdx, batchSize);
+
+      const fullCards: InsertMotherCard[] = partialCards.map((card, i) => {
+        const cardNum = startNum + i;
+        const globalIdx = batchIdx * BATCH_SIZE + i;
+        const paddedNum = String(cardNum).padStart(3, "0");
+
+        return {
+          cardId: `${cardIdPrefix}_PREV_${paddedNum}`,
+          themeId,
+          packId,
+          subthemeId,
+          language: "fr" as const,
+          channel: getChannelForIndex(globalIdx),
+          difficulty: getDifficultyForIndex(globalIdx),
+          intent: card.intent || "",
+          situation: card.situation || "",
+          speakerRole: card.speakerRole || "",
+          otherRole: card.otherRole || "",
+          relationship: card.relationship || "",
+          stakes: card.stakes || "medium",
+          userGoal: card.userGoal || "",
+          constraints: card.constraints || [],
+          tags: card.tags || [],
+          antiPatterns: card.antiPatterns || [],
+          targetVibe: card.targetVibe || "",
+          modelAnswerRules: card.modelAnswerRules || [],
+          variantRulesSafe: card.variantRulesSafe || [],
+          variantRulesMedium: card.variantRulesMedium || [],
+          variantRulesBold: card.variantRulesBold || [],
+        };
+      });
+
+      allCards.push(...fullCards);
+
+      if (batchIdx < totalBatches - 1) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    } catch (error) {
+      console.error(`[SeedCards] Preview batch ${batchIdx + 1} failed:`, error);
+      throw error;
+    }
+  }
+
+  return allCards;
+}

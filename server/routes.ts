@@ -8,6 +8,17 @@ import { insertUserProfileSchema, insertSessionEventSchema } from "@shared/schem
 import { z } from "zod";
 import { isAuthenticated } from "./replit_integrations/auth";
 
+declare module "express-session" {
+  interface SessionData {
+    adminLoggedIn?: boolean;
+  }
+}
+
+function isAdminSession(req: any, res: any, next: any) {
+  if (req.session?.adminLoggedIn === true) return next();
+  return res.status(401).json({ error: "Admin authentication required" });
+}
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 function calculateNextReview(
@@ -517,17 +528,45 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.post("/api/admin/generate-cards", isAuthenticated, async (req: any, res) => {
+  // ─── Admin Auth ────────────────────────────────────────────────────────────
+
+  app.post("/api/admin/login", async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
-      const { db: dbModule } = await import("./db");
-      const { users } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
-      if (!user?.isAdmin) {
-        return res.status(403).json({ error: "Admin access required" });
+      const { username, password } = req.body;
+      const adminUsername = process.env.ADMIN_USERNAME;
+      const adminPassword = process.env.ADMIN_PASSWORD;
+
+      if (!adminUsername || !adminPassword) {
+        return res.status(500).json({ error: "Admin credentials not configured" });
       }
 
+      if (username === adminUsername && password === adminPassword) {
+        req.session.adminLoggedIn = true;
+        req.session.save((err: any) => {
+          if (err) return res.status(500).json({ error: "Session error" });
+          res.json({ ok: true });
+        });
+      } else {
+        res.status(401).json({ error: "Identifiants incorrects" });
+      }
+    } catch (error) {
+      res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+  app.post("/api/admin/logout", (req: any, res) => {
+    req.session.adminLoggedIn = false;
+    req.session.save(() => res.json({ ok: true }));
+  });
+
+  app.get("/api/admin/check", (req: any, res) => {
+    res.json({ ok: req.session?.adminLoggedIn === true });
+  });
+
+  // ─── Admin Card Management ─────────────────────────────────────────────────
+
+  app.post("/api/admin/generate-cards", isAdminSession, async (req: any, res) => {
+    try {
       const { generateAllCards, THEMES_CONFIG } = await import("./seed-cards");
 
       res.json({ started: true, message: "Card generation started", themes: THEMES_CONFIG.map(t => ({ id: t.id, label: t.label, subthemes: t.subthemes.length })) });
@@ -541,17 +580,55 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.post("/api/admin/generate-subtheme", isAuthenticated, async (req: any, res) => {
+  app.post("/api/admin/preview-cards", isAdminSession, async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
-      const { db: dbModule } = await import("./db");
-      const { users } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
-      if (!user?.isAdmin) {
-        return res.status(403).json({ error: "Admin access required" });
+      const { themeId, themeLabel, subthemeId, subthemeLabel, subthemeIntents, subthemeExamples, count } = req.body;
+
+      if (!themeId || !subthemeId) {
+        return res.status(400).json({ error: "themeId and subthemeId required" });
       }
 
+      const { generateCardsForPreview } = await import("./seed-cards");
+      const cards = await generateCardsForPreview(
+        themeId,
+        themeLabel || themeId,
+        subthemeId,
+        subthemeLabel || subthemeId,
+        subthemeIntents || ["open", "respond", "close"],
+        subthemeExamples || [],
+        Math.min(count || 10, 50)
+      );
+
+      res.json({ cards });
+    } catch (error) {
+      console.error("Error generating preview cards:", error);
+      res.status(500).json({ error: "Failed to generate preview cards" });
+    }
+  });
+
+  app.post("/api/admin/bulk-save-cards", isAdminSession, async (req: any, res) => {
+    try {
+      const { cards } = req.body;
+
+      if (!Array.isArray(cards) || cards.length === 0) {
+        return res.status(400).json({ error: "No cards to save" });
+      }
+
+      const finalCards = cards.map((card: any) => ({
+        ...card,
+        cardId: card.cardId.replace("_PREV_", "_"),
+      }));
+
+      await storage.createMotherCards(finalCards);
+      res.json({ success: true, saved: finalCards.length });
+    } catch (error) {
+      console.error("Error saving bulk cards:", error);
+      res.status(500).json({ error: "Failed to save cards" });
+    }
+  });
+
+  app.post("/api/admin/generate-subtheme", isAdminSession, async (req: any, res) => {
+    try {
       const { themeId, subthemeId, forceRegenerate } = req.body;
       const { generateSubthemeCards } = await import("./seed-cards");
 
@@ -577,17 +654,8 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.get("/api/admin/themes", isAuthenticated, async (req: any, res) => {
+  app.get("/api/admin/themes", isAdminSession, async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
-      const { db: dbModule } = await import("./db");
-      const { users } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
-      if (!user?.isAdmin) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-
       const { THEMES_CONFIG } = await import("./seed-cards");
       res.json(THEMES_CONFIG);
     } catch (error) {
@@ -596,17 +664,10 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.get("/api/admin/users", isAuthenticated, async (req: any, res) => {
+  app.get("/api/admin/users", isAdminSession, async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
       const { db: dbModule } = await import("./db");
       const { users } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
-      if (!user?.isAdmin) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-
       const allUsers = await dbModule.select().from(users);
       res.json(allUsers);
     } catch (error) {
@@ -615,17 +676,11 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.patch("/api/admin/users/:id/admin", isAuthenticated, async (req: any, res) => {
+  app.patch("/api/admin/users/:id/admin", isAdminSession, async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
       const { db: dbModule } = await import("./db");
       const { users } = await import("@shared/schema");
       const { eq } = await import("drizzle-orm");
-      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
-      if (!user?.isAdmin) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-
       const { isAdmin } = req.body;
       const [updated] = await dbModule.update(users).set({ isAdmin }).where(eq(users.id, req.params.id)).returning();
       res.json(updated);
@@ -635,17 +690,8 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.delete("/api/admin/cards/:cardId", isAuthenticated, async (req: any, res) => {
+  app.delete("/api/admin/cards/:cardId", isAdminSession, async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
-      const { db: dbModule } = await import("./db");
-      const { users } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
-      if (!user?.isAdmin) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-
       await storage.deleteMotherCard(req.params.cardId);
       res.json({ success: true });
     } catch (error) {
@@ -654,17 +700,8 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.patch("/api/admin/cards/:cardId", isAuthenticated, async (req: any, res) => {
+  app.patch("/api/admin/cards/:cardId", isAdminSession, async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
-      const { db: dbModule } = await import("./db");
-      const { users } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
-      if (!user?.isAdmin) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-
       const card = await storage.updateMotherCard(req.params.cardId, req.body);
       if (!card) {
         return res.status(404).json({ error: "Card not found" });
@@ -676,17 +713,8 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.get("/api/admin/settings", isAuthenticated, async (req: any, res) => {
+  app.get("/api/admin/settings", isAdminSession, async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
-      const { db: dbModule } = await import("./db");
-      const { users } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
-      if (!user?.isAdmin) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-
       const settings = await storage.getAllAdminSettings();
       const current = getAIRuntimeConfig();
       res.json({
@@ -701,17 +729,8 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.patch("/api/admin/settings", isAuthenticated, async (req: any, res) => {
+  app.patch("/api/admin/settings", isAdminSession, async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
-      const { db: dbModule } = await import("./db");
-      const { users } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
-      if (!user?.isAdmin) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-
       const { scoring_model, generation_model, bagou_system_extra, dialogue_turns } = req.body;
 
       if (scoring_model) await storage.setAdminSetting("scoring_model", scoring_model);
@@ -733,17 +752,8 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.patch("/api/admin/users/:id/subscription", isAuthenticated, async (req: any, res) => {
+  app.patch("/api/admin/users/:id/subscription", isAdminSession, async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
-      const { db: dbModule } = await import("./db");
-      const { users } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-      const [user] = await dbModule.select().from(users).where(eq(users.id, userId));
-      if (!user?.isAdmin) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-
       const { subscriptionStatus, subscriptionExpiresAt } = req.body;
       const updateData: any = {};
       if (subscriptionStatus) updateData.subscriptionStatus = subscriptionStatus;

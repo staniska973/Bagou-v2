@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -43,11 +42,15 @@ import {
   Search,
   Zap,
   ArrowLeft,
-  ShieldAlert,
   Pencil,
   Bot,
   CreditCard,
   Save,
+  LogOut,
+  Eye,
+  Plus,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import type { MotherCard, User } from "@shared/schema";
@@ -59,34 +62,136 @@ interface ThemeConfig {
 }
 
 export default function Admin() {
-  const { user, isLoading: authLoading } = useAuth();
-  const [, navigate] = useLocation();
+  const { data: authCheck, isLoading: authLoading } = useQuery<{ ok: boolean }>({
+    queryKey: ["/api/admin/check"],
+    retry: false,
+  });
 
   if (authLoading) {
     return <AdminSkeleton />;
   }
 
-  if (!user?.isAdmin) {
+  if (!authCheck?.ok) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-6">
-        <Card className="max-w-md w-full">
-          <CardContent className="p-8 text-center space-y-4">
-            <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto">
-              <ShieldAlert className="w-8 h-8 text-destructive" />
-            </div>
-            <h2 className="text-xl font-bold" data-testid="text-access-denied">Accès refusé</h2>
-            <p className="text-muted-foreground" data-testid="text-access-denied-message">
-              Vous n'avez pas les droits d'administrateur pour accéder à cette page.
-            </p>
-            <Button onClick={() => navigate("/")} data-testid="button-go-home">
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Retour à l'accueil
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      <AdminLogin
+        onLogin={() => queryClient.invalidateQueries({ queryKey: ["/api/admin/check"] })}
+      />
     );
   }
+
+  return <AdminDashboard />;
+}
+
+function AdminLogin({ onLogin }: { onLogin: () => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const { toast } = useToast();
+
+  const login = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Identifiants incorrects");
+      return data;
+    },
+    onSuccess: () => {
+      onLogin();
+    },
+    onError: (error: Error) => {
+      toast({ title: "Accès refusé", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    login.mutate();
+  };
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-6">
+      <Card className="max-w-sm w-full">
+        <CardHeader className="pb-4">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+              <Shield className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-xl">Portail Admin</CardTitle>
+              <p className="text-sm text-muted-foreground">Bagou</p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="admin-username">Identifiant</Label>
+              <Input
+                id="admin-username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+                autoFocus
+                data-testid="input-admin-username"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="admin-password">Mot de passe</Label>
+              <Input
+                id="admin-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                data-testid="input-admin-password"
+              />
+            </div>
+            {login.isError && (
+              <p className="text-sm text-destructive" data-testid="text-login-error">
+                Identifiants incorrects
+              </p>
+            )}
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={login.isPending || !username || !password}
+              data-testid="button-admin-login"
+            >
+              {login.isPending ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Connexion...
+                </>
+              ) : (
+                "Se connecter"
+              )}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function AdminDashboard() {
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
+
+  const logout = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/admin/logout");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/check"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+    },
+  });
 
   return (
     <div className="min-h-screen bg-background p-6">
@@ -101,10 +206,21 @@ export default function Admin() {
               <p className="text-sm text-muted-foreground">Gérer le contenu et les utilisateurs Bagou</p>
             </div>
           </div>
-          <Button variant="outline" onClick={() => navigate("/")} data-testid="button-back-home">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Retour
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => navigate("/")} data-testid="button-back-home">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Retour
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => logout.mutate()}
+              disabled={logout.isPending}
+              data-testid="button-logout"
+            >
+              <LogOut className="w-4 h-4 mr-2" />
+              Déconnexion
+            </Button>
+          </div>
         </div>
 
         <Tabs defaultValue="overview" data-testid="tabs-admin">
@@ -578,6 +694,17 @@ function GenerateTab() {
   const [selectedTheme, setSelectedTheme] = useState<string>("");
   const [selectedSubtheme, setSelectedSubtheme] = useState<string>("");
   const [forceRegenerate, setForceRegenerate] = useState(false);
+  const [previewCount, setPreviewCount] = useState<string>("10");
+  const [previewCards, setPreviewCards] = useState<any[]>([]);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [showNewSubtheme, setShowNewSubtheme] = useState(false);
+  const [newThemeId, setNewThemeId] = useState("");
+  const [newThemeLabel, setNewThemeLabel] = useState("");
+  const [newSubthemeId, setNewSubthemeId] = useState("");
+  const [newSubthemeLabel, setNewSubthemeLabel] = useState("");
+  const [newIntents, setNewIntents] = useState("open, respond, close");
+  const [newExamples, setNewExamples] = useState("");
+  const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const { toast } = useToast();
 
   const { data: themes } = useQuery<ThemeConfig[]>({
@@ -621,6 +748,69 @@ function GenerateTab() {
     },
   });
 
+  const previewExisting = useMutation({
+    mutationFn: async () => {
+      const theme = themes?.find((t) => t.id === selectedTheme);
+      const subtheme = theme?.subthemes.find((s) => s.id === selectedSubtheme);
+      const res = await apiRequest("POST", "/api/admin/preview-cards", {
+        themeId: selectedTheme,
+        themeLabel: theme?.label || selectedTheme,
+        subthemeId: selectedSubtheme,
+        subthemeLabel: subtheme?.label || selectedSubtheme,
+        count: parseInt(previewCount),
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setPreviewCards(data.cards || []);
+      setShowPreviewModal(true);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const previewNew = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/preview-cards", {
+        themeId: newThemeId,
+        themeLabel: newThemeLabel || newThemeId,
+        subthemeId: newSubthemeId,
+        subthemeLabel: newSubthemeLabel || newSubthemeId,
+        subthemeIntents: newIntents.split(",").map((s) => s.trim()).filter(Boolean),
+        subthemeExamples: newExamples.split("\n").map((s) => s.trim()).filter(Boolean),
+        count: parseInt(previewCount),
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setPreviewCards(data.cards || []);
+      setShowPreviewModal(true);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const saveCards = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/bulk-save-cards", { cards: previewCards });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mother-cards"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/mother-cards/count"] });
+      setShowPreviewModal(false);
+      setPreviewCards([]);
+      toast({ title: "Cartes enregistrées", description: `${data.saved} cartes sauvegardées avec succès.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const countOptions = ["10", "20", "30", "40", "50"];
+
   return (
     <div className="space-y-6">
       <Card>
@@ -632,7 +822,7 @@ function GenerateTab() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Lancer une génération complète des cartes pour tous les thèmes et sous-thèmes.
+            Lancer une génération complète pour tous les thèmes et sous-thèmes configurés.
             L'opération s'exécute en arrière-plan et peut prendre plusieurs minutes.
           </p>
           <Button
@@ -658,11 +848,15 @@ function GenerateTab() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
-            <RefreshCw className="w-4 h-4" />
-            Générer par sous-thème
+            <Eye className="w-4 h-4" />
+            Aperçu avant enregistrement
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Générez un aperçu des cartes pour vérifier leur qualité avant de les sauvegarder.
+          </p>
+
           <div className="flex items-center gap-3 flex-wrap">
             <Select
               value={selectedTheme}
@@ -700,6 +894,38 @@ function GenerateTab() {
               </SelectContent>
             </Select>
 
+            <Select value={previewCount} onValueChange={setPreviewCount}>
+              <SelectTrigger className="w-[120px]" data-testid="select-preview-count">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {countOptions.map((n) => (
+                  <SelectItem key={n} value={n}>{n} cartes</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <Button
+              onClick={() => previewExisting.mutate()}
+              disabled={!selectedTheme || !selectedSubtheme || previewExisting.isPending}
+              variant="outline"
+              data-testid="button-preview-existing"
+            >
+              {previewExisting.isPending ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Génération...
+                </>
+              ) : (
+                <>
+                  <Eye className="w-4 h-4 mr-2" />
+                  Générer un aperçu
+                </>
+              )}
+            </Button>
+
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input
                 type="checkbox"
@@ -710,27 +936,222 @@ function GenerateTab() {
               />
               Forcer la régénération
             </label>
-          </div>
 
-          <Button
-            onClick={() => generateSubtheme.mutate()}
-            disabled={!selectedTheme || !selectedSubtheme || generateSubtheme.isPending}
-            data-testid="button-generate-subtheme"
-          >
-            {generateSubtheme.isPending ? (
-              <>
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                Génération...
-              </>
-            ) : (
-              <>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Générer le sous-thème
-              </>
-            )}
-          </Button>
+            <Button
+              onClick={() => generateSubtheme.mutate()}
+              disabled={!selectedTheme || !selectedSubtheme || generateSubtheme.isPending}
+              data-testid="button-generate-subtheme"
+            >
+              {generateSubtheme.isPending ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Génération...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Générer directement
+                </>
+              )}
+            </Button>
+          </div>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Plus className="w-4 h-4" />
+              Nouveau sous-thème
+            </CardTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowNewSubtheme(!showNewSubtheme)}
+              data-testid="button-toggle-new-subtheme"
+            >
+              {showNewSubtheme ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </Button>
+          </div>
+        </CardHeader>
+        {showNewSubtheme && (
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Créer et prévisualiser des cartes pour un nouveau sous-thème avant de les enregistrer.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="new-theme-id">ID Thème (ex: ASSERTIVITE)</Label>
+                <Input
+                  id="new-theme-id"
+                  value={newThemeId}
+                  onChange={(e) => setNewThemeId(e.target.value.toUpperCase())}
+                  placeholder="ASSERTIVITE"
+                  data-testid="input-new-theme-id"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-theme-label">Nom du thème</Label>
+                <Input
+                  id="new-theme-label"
+                  value={newThemeLabel}
+                  onChange={(e) => setNewThemeLabel(e.target.value)}
+                  placeholder="Assertivité"
+                  data-testid="input-new-theme-label"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-subtheme-id">ID Sous-thème (ex: REFUS)</Label>
+                <Input
+                  id="new-subtheme-id"
+                  value={newSubthemeId}
+                  onChange={(e) => setNewSubthemeId(e.target.value.toUpperCase())}
+                  placeholder="REFUS"
+                  data-testid="input-new-subtheme-id"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-subtheme-label">Nom du sous-thème</Label>
+                <Input
+                  id="new-subtheme-label"
+                  value={newSubthemeLabel}
+                  onChange={(e) => setNewSubthemeLabel(e.target.value)}
+                  placeholder="Dire non"
+                  data-testid="input-new-subtheme-label"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="new-intents">Intentions (séparées par des virgules)</Label>
+              <Input
+                id="new-intents"
+                value={newIntents}
+                onChange={(e) => setNewIntents(e.target.value)}
+                placeholder="open, respond, close, redirect"
+                data-testid="input-new-intents"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="new-examples">Exemples de situations (une par ligne)</Label>
+              <Textarea
+                id="new-examples"
+                value={newExamples}
+                onChange={(e) => setNewExamples(e.target.value)}
+                placeholder={"Refuser une invitation au dernier moment\nDire non à une demande de service urgent"}
+                rows={4}
+                data-testid="textarea-new-examples"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              <Select value={previewCount} onValueChange={setPreviewCount}>
+                <SelectTrigger className="w-[120px]" data-testid="select-new-preview-count">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {countOptions.map((n) => (
+                    <SelectItem key={n} value={n}>{n} cartes</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                onClick={() => previewNew.mutate()}
+                disabled={!newThemeId || !newSubthemeId || previewNew.isPending}
+                variant="outline"
+                data-testid="button-preview-new"
+              >
+                {previewNew.isPending ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Génération...
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-4 h-4 mr-2" />
+                    Générer un aperçu
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        )}
+      </Card>
+
+      <Dialog open={showPreviewModal} onOpenChange={(open) => !open && setShowPreviewModal(false)}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Aperçu — {previewCards.length} cartes générées
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {previewCards.map((card, i) => (
+              <div
+                key={card.cardId || i}
+                className="border rounded-lg overflow-hidden"
+                data-testid={`preview-card-${i}`}
+              >
+                <button
+                  className="w-full flex items-center justify-between gap-3 p-3 text-left hover:bg-muted/50 transition-colors"
+                  onClick={() => setExpandedCard(expandedCard === (card.cardId || String(i)) ? null : (card.cardId || String(i)))}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Badge variant="secondary" className="shrink-0">{card.difficulty}</Badge>
+                    <span className="text-sm truncate">{card.situation}</span>
+                  </div>
+                  {expandedCard === (card.cardId || String(i)) ? (
+                    <ChevronUp className="w-4 h-4 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 shrink-0 text-muted-foreground" />
+                  )}
+                </button>
+                {expandedCard === (card.cardId || String(i)) && (
+                  <div className="px-3 pb-3 space-y-2 text-sm border-t">
+                    <p className="pt-2"><span className="font-medium">Objectif : </span>{card.userGoal}</p>
+                    <p><span className="font-medium">Rôles : </span>{card.speakerRole} / {card.otherRole}</p>
+                    <p><span className="font-medium">Relation : </span>{card.relationship}</p>
+                    <p><span className="font-medium">Vibe : </span>{card.targetVibe}</p>
+                    {card.constraints?.length > 0 && (
+                      <p><span className="font-medium">Contraintes : </span>{card.constraints.join(", ")}</p>
+                    )}
+                    {card.antiPatterns?.length > 0 && (
+                      <p><span className="font-medium">Anti-patterns : </span>{card.antiPatterns.join(", ")}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowPreviewModal(false)} data-testid="button-discard-preview">
+              Annuler
+            </Button>
+            <Button
+              onClick={() => saveCards.mutate()}
+              disabled={saveCards.isPending || previewCards.length === 0}
+              data-testid="button-save-preview"
+            >
+              {saveCards.isPending ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Enregistrement...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Valider et enregistrer ({previewCards.length})
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -77,6 +77,24 @@ Implements Anki-style SM-2 spaced repetition:
 - **Easy**: Multiply interval by 2.5x, increase ease
 - Cards with 2+ lapses marked as priority for targeted practice
 
+## Admin Panel Authentication
+
+The admin panel (`/admin`) uses a **separate session-based authentication** completely independent from Replit OAuth:
+- Login: `POST /api/admin/login` with `ADMIN_USERNAME` + `ADMIN_PASSWORD` env vars
+- Logout: `POST /api/admin/logout`
+- Session check: `GET /api/admin/check`
+- All admin API routes protected by `isAdminSession` middleware (not `isAuthenticated`)
+- Admin credentials configured via `ADMIN_USERNAME` and `ADMIN_PASSWORD` env vars
+
+### Card Generation Preview
+
+Admin GenerateTab now supports a preview-before-save workflow:
+- `POST /api/admin/preview-cards` — generates cards (via AI) without saving to DB
+- `POST /api/admin/bulk-save-cards` — saves pre-generated preview cards to DB
+- Count selector: 10 / 20 / 30 / 40 / 50 cards
+- New subtheme form for creating cards with custom theme/subtheme config
+- `generateCardsForPreview()` exported from `server/seed-cards.ts`
+
 ## External Dependencies
 
 ### Database
