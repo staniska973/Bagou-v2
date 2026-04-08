@@ -4,11 +4,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Brain,
   Send,
-  ChevronRight,
   ArrowLeft,
   CheckCircle,
   Loader2,
-  RotateCcw,
   Mic,
   MicOff,
   MessageCircle,
@@ -18,6 +16,10 @@ import {
   ThumbsUp,
   ThumbsDown,
   Minus,
+  RotateCcw,
+  ChevronRight,
+  Zap,
+  TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -50,18 +52,64 @@ interface FlashcardData {
   srsState?: any;
 }
 
-interface DialogueMessage {
-  role: "user" | "assistant";
-  content: string;
-  coachWhisper?: string;
-  isFinal?: boolean;
-}
-
-interface FinalFeedback {
+interface TurnEvaluation {
+  score: "weak" | "ok" | "strong";
+  comment: string;
   modelAnswer: string;
   variants: { safe: string; medium: string; bold: string };
-  rating: "hard" | "medium" | "easy";
+}
+
+interface GlobalDynamic {
   feedback: string;
+  rating: "hard" | "medium" | "easy";
+  pattern: string;
+}
+
+interface ConvoMessage {
+  role: "user" | "interlocutor";
+  content: string;
+  eval?: TurnEvaluation;
+}
+
+interface DialogueTurnResult {
+  turnEval: TurnEvaluation;
+  interlocutorReply: string;
+  isFinalTurn: boolean;
+  globalDynamic?: GlobalDynamic;
+  maxTurns?: number;
+}
+
+type SessionPhase = "typing" | "evaluating" | "reviewed" | "globalFeedback";
+
+function ScoreChip({ score }: { score: "weak" | "ok" | "strong" }) {
+  if (score === "strong") {
+    return (
+      <Badge className="text-[10px] bg-green-500/15 text-green-600 dark:text-green-400 border border-green-500/30 shrink-0">
+        ✓ Fort
+      </Badge>
+    );
+  }
+  if (score === "ok") {
+    return (
+      <Badge className="text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0">
+        ~ Correct
+      </Badge>
+    );
+  }
+  return (
+    <Badge className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30 shrink-0">
+      ✗ Faible
+    </Badge>
+  );
+}
+
+function VariantRow({ label, text, testId }: { label: string; text: string; testId: string }) {
+  return (
+    <div className="text-xs" data-testid={testId}>
+      <span className="text-muted-foreground font-medium">{label} : </span>
+      <span>{text}</span>
+    </div>
+  );
 }
 
 export default function Session() {
@@ -73,7 +121,6 @@ export default function Session() {
   const themeId = params.get("themeId");
   const subthemeId = params.get("subthemeId");
   const mode = params.get("mode");
-  const { language } = useAppStore();
   const { user } = useAuth();
 
   const { data: profile } = useQuery({
@@ -96,16 +143,18 @@ export default function Session() {
   const [cardsCompleted, setCardsCompleted] = useState(0);
   const [cardsFailed, setCardsFailed] = useState(0);
 
-  const [dialogueHistory, setDialogueHistory] = useState<DialogueMessage[]>([]);
+  const [phase, setPhase] = useState<SessionPhase>("typing");
+  const [convoHistory, setConvoHistory] = useState<ConvoMessage[]>([]);
+  const [pendingResult, setPendingResult] = useState<DialogueTurnResult | null>(null);
   const [turnNumber, setTurnNumber] = useState(1);
   const [maxTurns, setMaxTurns] = useState(3);
-  const [isWaiting, setIsWaiting] = useState(false);
-  const [finalFeedback, setFinalFeedback] = useState<FinalFeedback | null>(null);
+  const [globalDynamic, setGlobalDynamic] = useState<GlobalDynamic | null>(null);
   const [showVariants, setShowVariants] = useState(false);
+  const [isRating, setIsRating] = useState(false);
+
   const [userInput, setUserInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
-  const [isRating, setIsRating] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -136,26 +185,27 @@ export default function Session() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [dialogueHistory, isWaiting, finalFeedback]);
+  }, [convoHistory, phase, pendingResult]);
 
   const currentCard = cardQueue[currentQueueIndex];
   const totalOriginal = dueCards?.length || 0;
 
   const sendMessage = async () => {
-    if (!userInput.trim() || !currentCard || !profileId || isWaiting) return;
+    if (!userInput.trim() || !currentCard || !profileId || phase !== "typing") return;
 
     const message = userInput.trim();
     setUserInput("");
 
-    const newUserMessage: DialogueMessage = { role: "user", content: message };
-    const historyForApi = [
-      ...dialogueHistory.map((m) => ({ role: m.role, content: m.content })),
-    ];
-    const newHistory = [...dialogueHistory, newUserMessage];
-    setDialogueHistory(newHistory);
-    setIsWaiting(true);
+    const userMsg: ConvoMessage = { role: "user", content: message };
+    setConvoHistory((prev) => [...prev, userMsg]);
+    setPhase("evaluating");
 
     try {
+      const historyForApi = convoHistory.map((m) => ({
+        role: m.role === "user" ? ("user" as const) : ("assistant" as const),
+        content: m.content,
+      }));
+
       const res = await apiRequest("POST", "/api/session/dialogue-turn", {
         profileId,
         cardId: currentCard.card.cardId,
@@ -163,31 +213,54 @@ export default function Session() {
         userMessage: message,
         turnNumber,
       });
-      const data = await res.json();
+      const data: DialogueTurnResult = await res.json();
 
       if (data.maxTurns && data.maxTurns !== maxTurns) {
         setMaxTurns(data.maxTurns);
       }
 
-      const aiMessage: DialogueMessage = {
-        role: "assistant",
-        content: data.interlocutorReply,
-        coachWhisper: data.coachWhisper,
-        isFinal: data.isFinal,
-      };
-
-      setDialogueHistory((prev) => [...prev, aiMessage]);
-
-      if (data.isFinal && data.finalFeedback) {
-        setFinalFeedback(data.finalFeedback);
-      } else {
-        setTurnNumber((prev) => prev + 1);
-      }
+      setPendingResult(data);
+      setPhase("reviewed");
     } catch (error) {
       console.error("Error sending message:", error);
-    } finally {
-      setIsWaiting(false);
+      setConvoHistory((prev) => prev.slice(0, -1));
+      setPhase("typing");
     }
+  };
+
+  const handleRewrite = () => {
+    setConvoHistory((prev) => prev.slice(0, -1));
+    setPendingResult(null);
+    setPhase("typing");
+    setTimeout(() => textareaRef.current?.focus(), 50);
+  };
+
+  const handleContinue = () => {
+    if (!pendingResult) return;
+
+    setConvoHistory((prev) => {
+      const updated = [...prev];
+      let lastUserIdx = -1;
+      for (let i = updated.length - 1; i >= 0; i--) {
+        if (updated[i].role === "user") { lastUserIdx = i; break; }
+      }
+      if (lastUserIdx >= 0) {
+        updated[lastUserIdx] = { ...updated[lastUserIdx], eval: pendingResult.turnEval };
+      }
+      return [...updated, { role: "interlocutor", content: pendingResult.interlocutorReply }];
+    });
+
+    if (pendingResult.isFinalTurn) {
+      setGlobalDynamic(pendingResult.globalDynamic || null);
+      setPhase("globalFeedback");
+    } else {
+      setTurnNumber((prev) => prev + 1);
+      setPhase("typing");
+      setTimeout(() => textareaRef.current?.focus(), 50);
+    }
+
+    setPendingResult(null);
+    setShowVariants(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -207,7 +280,7 @@ export default function Session() {
         sessionId: sessionId ? parseInt(sessionId) : null,
         cardId: currentCard.card.cardId,
         rating,
-        userAnswer: dialogueHistory.find((m) => m.role === "user")?.content || "",
+        userAnswer: convoHistory.find((m) => m.role === "user")?.content || "",
       });
 
       if (rating === "hard") {
@@ -219,9 +292,11 @@ export default function Session() {
       const shouldRequeue = rating === "hard";
       const nextIdx = currentQueueIndex + 1;
 
-      setDialogueHistory([]);
+      setConvoHistory([]);
       setTurnNumber(1);
-      setFinalFeedback(null);
+      setPendingResult(null);
+      setGlobalDynamic(null);
+      setPhase("typing");
       setShowVariants(false);
 
       if (shouldRequeue) {
@@ -259,15 +334,10 @@ export default function Session() {
         try {
           const formData = new FormData();
           formData.append("audio", blob, "recording.webm");
-          const res = await fetch("/api/transcribe", {
-            method: "POST",
-            body: formData,
-          });
+          const res = await fetch("/api/transcribe", { method: "POST", body: formData });
           if (res.ok) {
             const { text } = await res.json();
-            if (text) {
-              setUserInput((prev) => (prev ? prev + " " + text : text));
-            }
+            if (text) setUserInput((prev) => (prev ? prev + " " + text : text));
           }
         } catch (err) {
           console.error("Transcription error:", err);
@@ -353,8 +423,6 @@ export default function Session() {
     ? Math.min((currentQueueIndex / totalOriginal) * 100, 100)
     : 0;
 
-  const isInputDisabled = isWaiting || !!finalFeedback;
-
   return (
     <div className="h-dvh flex flex-col bg-background">
       <div className="flex-shrink-0 border-b px-3 py-2">
@@ -367,13 +435,14 @@ export default function Session() {
               <div className="flex items-center gap-1.5">
                 <Brain className="w-3.5 h-3.5 text-primary" />
                 <span className="text-xs font-medium">
-                  {themeId || "Session"}
-                  {subthemeId ? ` / ${subthemeId}` : ""}
+                  {themeId || "Session"}{subthemeId ? ` / ${subthemeId}` : ""}
                 </span>
               </div>
-              <span className="text-xs text-muted-foreground">
-                {Math.min(currentQueueIndex + 1, cardQueue.length)}/{cardQueue.length}
-              </span>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>Tour {Math.min(turnNumber, maxTurns)}/{maxTurns}</span>
+                <span>·</span>
+                <span>{Math.min(currentQueueIndex + 1, cardQueue.length)}/{cardQueue.length}</span>
+              </div>
             </div>
             <Progress value={progressPercent} className="h-1" />
           </div>
@@ -401,144 +470,237 @@ export default function Session() {
                       <Badge variant="outline" className="text-[10px]" data-testid="badge-difficulty">
                         {currentCard.card.difficulty === "n1" ? "Facile" : currentCard.card.difficulty === "n2" ? "Moyen" : "Difficile"}
                       </Badge>
-                      <div className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
-                        <MessageCircle className="w-3 h-3" />
-                        Tour {Math.min(turnNumber, maxTurns)}/{maxTurns}
-                      </div>
                     </div>
                     <p className="text-sm leading-relaxed font-medium" data-testid="text-situation">
                       {currentCard.card.situation}
                     </p>
-                    <div className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
-                      <span>
-                        <span className="font-medium">Toi</span> ({currentCard.card.speakerRole})
-                        {" → "}
-                        <span className="font-medium">{currentCard.card.otherRole}</span>
-                      </span>
+                    <div className="flex items-center gap-1 mt-1.5 text-xs text-muted-foreground">
+                      <span className="font-medium">Toi</span>
+                      <span>({currentCard.card.speakerRole})</span>
+                      <span>→</span>
+                      <span className="font-medium">{currentCard.card.otherRole}</span>
                     </div>
                   </CardContent>
                 </Card>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
-                {dialogueHistory.length === 0 && (
+              <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+                {convoHistory.length === 0 && phase === "typing" && (
                   <div className="text-center text-muted-foreground text-xs py-6">
-                    <p className="mb-1">Objectif : <span className="font-medium text-foreground">{currentCard.card.userGoal}</span></p>
+                    <p className="mb-1">
+                      Objectif :{" "}
+                      <span className="font-medium text-foreground">{currentCard.card.userGoal}</span>
+                    </p>
                     <p>Tape ta première réplique ci-dessous</p>
                   </div>
                 )}
 
-                {dialogueHistory.map((msg, idx) => (
+                {convoHistory.map((msg, idx) => (
                   <motion.div
                     key={idx}
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.2 }}
-                    className={`flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}
                   >
                     {msg.role === "user" ? (
-                      <div className="flex items-end gap-2 max-w-[85%]">
-                        <div className="bg-primary text-primary-foreground rounded-2xl rounded-br-sm px-3 py-2 text-sm" data-testid={`bubble-user-${idx}`}>
-                          {msg.content}
+                      <div className="flex flex-col items-end gap-1.5">
+                        <div className="flex items-end gap-2 max-w-[85%]">
+                          <div
+                            className="bg-primary text-primary-foreground rounded-2xl rounded-br-sm px-3 py-2 text-sm"
+                            data-testid={`bubble-user-${idx}`}
+                          >
+                            {msg.content}
+                          </div>
+                          <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                            <User className="w-3 h-3 text-primary" />
+                          </div>
                         </div>
-                        <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                          <User className="w-3 h-3 text-primary" />
-                        </div>
+                        {msg.eval && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            className="w-full max-w-[90%] mr-8"
+                          >
+                            <div className="bg-muted/40 border rounded-xl p-2.5 space-y-1.5 text-left">
+                              <div className="flex items-start gap-1.5 flex-wrap">
+                                <ScoreChip score={msg.eval.score} />
+                                <span className="text-xs text-muted-foreground leading-relaxed">{msg.eval.comment}</span>
+                              </div>
+                              {msg.eval.modelAnswer && (
+                                <div className="text-xs border-l-2 border-primary/30 pl-2">
+                                  <span className="text-muted-foreground">Idéal : </span>
+                                  <span className="font-medium">{msg.eval.modelAnswer}</span>
+                                </div>
+                              )}
+                            </div>
+                          </motion.div>
+                        )}
                       </div>
                     ) : (
                       <div className="flex items-end gap-2 max-w-[85%]">
                         <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
                           <MessageCircle className="w-3 h-3 text-muted-foreground" />
                         </div>
-                        <div className="space-y-1">
-                          <div className="text-[10px] text-muted-foreground font-medium ml-1">
+                        <div>
+                          <div className="text-[10px] text-muted-foreground font-medium ml-1 mb-0.5">
                             {currentCard.card.otherRole}
                           </div>
-                          <div className={`rounded-2xl rounded-bl-sm px-3 py-2 text-sm ${msg.isFinal ? "bg-muted/80" : "bg-muted"}`} data-testid={`bubble-ai-${idx}`}>
+                          <div
+                            className="bg-muted rounded-2xl rounded-bl-sm px-3 py-2 text-sm"
+                            data-testid={`bubble-ai-${idx}`}
+                          >
                             {msg.content}
                           </div>
-                          {msg.coachWhisper && (
-                            <motion.div
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              className="flex items-start gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 ml-1"
-                              data-testid={`coach-whisper-${idx}`}
-                            >
-                              <Lightbulb className="w-3 h-3 text-amber-500 flex-shrink-0 mt-0.5" />
-                              <p className="text-[11px] text-amber-700 dark:text-amber-400 italic">{msg.coachWhisper}</p>
-                            </motion.div>
-                          )}
                         </div>
                       </div>
                     )}
                   </motion.div>
                 ))}
 
-                {isWaiting && (
-                  <div className="flex items-end gap-2">
-                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
-                      <MessageCircle className="w-3 h-3 text-muted-foreground" />
+                {phase === "evaluating" && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <div className="w-6 h-6 rounded-full bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                      <Zap className="w-3 h-3 text-amber-500" />
                     </div>
-                    <div className="bg-muted rounded-2xl rounded-bl-sm px-3 py-2">
-                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                    <div className="bg-muted rounded-2xl rounded-bl-sm px-3 py-2 flex items-center gap-1.5">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span className="text-xs">Évaluation en cours…</span>
                     </div>
                   </div>
                 )}
 
-                {finalFeedback && (
+                {phase === "reviewed" && pendingResult && (
                   <motion.div
                     initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="space-y-3 pt-2"
-                    data-testid="section-final-feedback"
+                    className="space-y-2"
+                    data-testid="section-turn-eval"
                   >
-                    <div className="border-t pt-3 text-center">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Bilan de l'échange</p>
-                    </div>
-
-                    <Card className={`${finalFeedback.rating === "hard" ? "border-destructive/40" : finalFeedback.rating === "easy" ? "border-green-500/40" : "border-amber-500/40"}`}>
-                      <CardContent className="p-3 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Badge
-                            variant={finalFeedback.rating === "easy" ? "default" : finalFeedback.rating === "medium" ? "secondary" : "destructive"}
-                            className="text-[10px]"
-                            data-testid="badge-final-rating"
-                          >
-                            {finalFeedback.rating === "easy" ? "Maîtrisé" : finalFeedback.rating === "medium" ? "Correct" : "À retravailler"}
-                          </Badge>
-                        </div>
-                        <p className="text-sm" data-testid="text-final-feedback">{finalFeedback.feedback}</p>
-
-                        <div className="bg-muted/50 rounded-lg p-2.5">
-                          <p className="text-[10px] font-medium text-muted-foreground mb-1">Réponse idéale (1er échange)</p>
-                          <p className="text-sm font-medium" data-testid="text-model-answer">{finalFeedback.modelAnswer}</p>
+                    <Card className="border-primary/20">
+                      <CardContent className="p-3 space-y-3">
+                        <div className="flex items-start gap-2 flex-wrap">
+                          <ScoreChip score={pendingResult.turnEval.score} />
+                          <p className="text-xs text-foreground leading-relaxed flex-1">
+                            {pendingResult.turnEval.comment}
+                          </p>
                         </div>
 
-                        <button
-                          className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer"
-                          onClick={() => setShowVariants(!showVariants)}
-                          data-testid="button-toggle-variants"
-                        >
-                          <ChevronDown className={`w-3 h-3 transition-transform ${showVariants ? "rotate-180" : ""}`} />
-                          3 variantes
-                        </button>
-
-                        {showVariants && (
-                          <motion.div
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: "auto" }}
-                            className="space-y-1.5 overflow-hidden"
+                        <div className="bg-muted/50 rounded-lg p-2.5 space-y-1.5">
+                          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                            <Lightbulb className="w-3 h-3" />
+                            Ce que tu aurais pu dire
+                          </p>
+                          <p className="text-sm font-medium leading-relaxed" data-testid="text-model-answer">
+                            {pendingResult.turnEval.modelAnswer}
+                          </p>
+                          <button
+                            className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5"
+                            onClick={() => setShowVariants(!showVariants)}
+                            data-testid="button-toggle-variants"
                           >
-                            <VariantRow label="Prudente" text={finalFeedback.variants.safe} testId="text-variant-safe" />
-                            <VariantRow label="Équilibrée" text={finalFeedback.variants.medium} testId="text-variant-medium" />
-                            <VariantRow label="Audacieuse" text={finalFeedback.variants.bold} testId="text-variant-bold" />
-                          </motion.div>
-                        )}
+                            <ChevronDown className={`w-3 h-3 transition-transform ${showVariants ? "rotate-180" : ""}`} />
+                            3 variantes
+                          </button>
+                          {showVariants && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: "auto" }}
+                              className="space-y-1.5 overflow-hidden pt-1"
+                            >
+                              <VariantRow label="Prudente" text={pendingResult.turnEval.variants.safe} testId="text-variant-safe" />
+                              <VariantRow label="Équilibrée" text={pendingResult.turnEval.variants.medium} testId="text-variant-medium" />
+                              <VariantRow label="Audacieuse" text={pendingResult.turnEval.variants.bold} testId="text-variant-bold" />
+                            </motion.div>
+                          )}
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1 text-xs h-9 gap-1.5"
+                            onClick={handleRewrite}
+                            data-testid="button-rewrite"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            Réécrire
+                          </Button>
+                          <Button
+                            size="sm"
+                            className="flex-1 text-xs h-9 gap-1.5"
+                            onClick={handleContinue}
+                            data-testid="button-continue"
+                          >
+                            Continuer
+                            <ChevronRight className="w-3 h-3" />
+                          </Button>
+                        </div>
                       </CardContent>
                     </Card>
+                  </motion.div>
+                )}
+
+                {phase === "globalFeedback" && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="space-y-3 pt-1"
+                    data-testid="section-global-feedback"
+                  >
+                    <div className="border-t pt-3 text-center">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center justify-center gap-1.5">
+                        <TrendingUp className="w-3.5 h-3.5" />
+                        Dynamique globale
+                      </p>
+                    </div>
+
+                    {globalDynamic && (
+                      <Card
+                        className={
+                          globalDynamic.rating === "hard"
+                            ? "border-destructive/40"
+                            : globalDynamic.rating === "easy"
+                            ? "border-green-500/40"
+                            : "border-amber-500/40"
+                        }
+                      >
+                        <CardContent className="p-3 space-y-2">
+                          <Badge
+                            variant={
+                              globalDynamic.rating === "easy"
+                                ? "default"
+                                : globalDynamic.rating === "medium"
+                                ? "secondary"
+                                : "destructive"
+                            }
+                            className="text-[10px]"
+                            data-testid="badge-global-rating"
+                          >
+                            {globalDynamic.rating === "easy"
+                              ? "Maîtrisé"
+                              : globalDynamic.rating === "medium"
+                              ? "Correct"
+                              : "À retravailler"}
+                          </Badge>
+                          <p className="text-sm leading-relaxed" data-testid="text-global-feedback">
+                            {globalDynamic.feedback}
+                          </p>
+                          {globalDynamic.pattern && (
+                            <div className="bg-muted/50 rounded-lg px-2.5 py-1.5">
+                              <p className="text-xs text-muted-foreground">
+                                <span className="font-medium">Pattern : </span>
+                                {globalDynamic.pattern}
+                              </p>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
 
                     <div className="space-y-2">
-                      <p className="text-xs text-center text-muted-foreground">Comment tu as géré cet échange ?</p>
+                      <p className="text-xs text-center text-muted-foreground">
+                        Comment tu as géré cet échange ?
+                      </p>
                       <div className="grid grid-cols-3 gap-2">
                         <Button
                           variant="outline"
@@ -581,17 +743,20 @@ export default function Session() {
                 <div ref={chatEndRef} />
               </div>
 
-              {!finalFeedback && (
+              {phase === "typing" && (
                 <div className="flex-shrink-0 border-t px-3 py-2 bg-background">
                   <div className="flex items-end gap-2">
                     <Textarea
                       ref={textareaRef}
-                      placeholder={turnNumber === 1 ? "Ta première réplique (1-2 phrases)..." : "Continue l'échange..."}
+                      placeholder={
+                        turnNumber === 1
+                          ? "Ta première réplique (1-2 phrases)…"
+                          : "Continue l'échange…"
+                      }
                       value={userInput}
                       onChange={(e) => setUserInput(e.target.value)}
                       onKeyDown={handleKeyDown}
                       className="flex-1 resize-none text-sm min-h-[60px] max-h-[120px]"
-                      disabled={isInputDisabled}
                       rows={2}
                       data-testid="textarea-answer"
                     />
@@ -601,7 +766,6 @@ export default function Session() {
                         size="icon"
                         className="w-9 h-9"
                         onClick={isRecording ? stopRecording : startRecording}
-                        disabled={isInputDisabled}
                         data-testid="button-voice"
                       >
                         {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
@@ -610,14 +774,10 @@ export default function Session() {
                         size="icon"
                         className="w-9 h-9"
                         onClick={sendMessage}
-                        disabled={!userInput.trim() || isInputDisabled}
+                        disabled={!userInput.trim()}
                         data-testid="button-submit-answer"
                       >
-                        {isWaiting ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Send className="w-4 h-4" />
-                        )}
+                        <Send className="w-4 h-4" />
                       </Button>
                     </div>
                   </div>
@@ -627,15 +787,6 @@ export default function Session() {
           )}
         </motion.div>
       </AnimatePresence>
-    </div>
-  );
-}
-
-function VariantRow({ label, text, testId }: { label: string; text: string; testId: string }) {
-  return (
-    <div className="border-l-2 border-muted pl-2">
-      <p className="text-[10px] font-medium text-muted-foreground">{label}</p>
-      <p className="text-xs text-muted-foreground" data-testid={testId}>{text}</p>
     </div>
   );
 }

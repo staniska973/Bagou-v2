@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateCardDialogueTurn, updateAIRuntimeConfig, getAIRuntimeConfig } from "./ai";
+import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, updateAIRuntimeConfig, getAIRuntimeConfig } from "./ai";
 import { speechToText, ensureCompatibleFormat } from "./replit_integrations/audio/client";
 import { insertUserProfileSchema, insertSessionEventSchema } from "@shared/schema";
 import { z } from "zod";
@@ -778,7 +778,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       const settings = await storage.getAllAdminSettings();
       const maxTurns = parseInt(settings.dialogue_turns || "3");
 
-      const result = await generateCardDialogueTurn(
+      const result = await generateDialogueTurnWithEval(
         profile,
         card,
         history || [],

@@ -371,55 +371,68 @@ JSON:
   }
 }
 
-export interface CardDialogueTurnResponse {
-  interlocutorReply: string;
-  coachWhisper: string;
-  isFinal: boolean;
-  finalFeedback?: {
-    modelAnswer: string;
-    variants: { safe: string; medium: string; bold: string };
-    rating: "hard" | "medium" | "easy";
-    feedback: string;
-  };
+export interface TurnEvaluation {
+  score: "weak" | "ok" | "strong";
+  comment: string;
+  modelAnswer: string;
+  variants: { safe: string; medium: string; bold: string };
 }
 
-export async function generateCardDialogueTurn(
+export interface GlobalDynamic {
+  feedback: string;
+  rating: "hard" | "medium" | "easy";
+  pattern: string;
+}
+
+export interface DialogueTurnResult {
+  turnEval: TurnEvaluation;
+  interlocutorReply: string;
+  isFinalTurn: boolean;
+  globalDynamic?: GlobalDynamic;
+}
+
+export async function generateDialogueTurnWithEval(
   profile: UserProfile,
   card: MotherCard,
   history: { role: "user" | "assistant"; content: string }[],
   userMessage: string,
   turnNumber: number,
   maxTurns: number = 3
-): Promise<CardDialogueTurnResponse> {
-  const isFinal = turnNumber >= maxTurns;
-  const firstUserMessage = history.find((m) => m.role === "user")?.content || userMessage;
+): Promise<DialogueTurnResult> {
+  const isFinalTurn = turnNumber >= maxTurns;
+
+  const jsonSchema = isFinalTurn
+    ? `{"turnEval":{"score":"ok","comment":"...","modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."}},"interlocutorReply":"...","globalDynamic":{"feedback":"...","rating":"medium","pattern":"..."}}`
+    : `{"turnEval":{"score":"ok","comment":"...","modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."}},"interlocutorReply":"..."}`;
 
   const systemPrompt = `${getBagouSystem()}
 
-Tu joues un double rôle dans cet exercice de communication :
+Tu joues deux rôles simultanément dans un exercice de communication :
 
-1. INTERLOCUTEUR : Tu es "${card.otherRole}" dans cette situation : "${card.situation}"
-   - Tu réagis naturellement et réalistement à ce que dit l'utilisateur
-   - Relation : ${card.relationship} | Enjeux : ${card.stakes}
-   - Ton : ni trop facile, ni agressif. Tu testes l'utilisateur de façon réaliste.
-   - 1-2 phrases maximum. Oral et naturel.
+SITUATION : "${card.situation}"
+Rôles : L'utilisateur = "${card.speakerRole}" / Interlocuteur = "${card.otherRole}"
+Relation : ${card.relationship} | Enjeux : ${card.stakes}
+Objectif de l'utilisateur : ${card.userGoal}
+Anti-patterns à éviter : ${card.antiPatterns?.join(", ") || "aucun"}
 
-2. COACH BAGOU (en parallèle) : 1 phrase ultra-concise pour aider l'utilisateur à progresser.
-   - Si bonne réponse : ce qui était fort
-   - Si à améliorer : l'une chose précise à changer
-   - Style Bagou direct, pas de blabla
+---
+RÔLE 1 — ÉVALUATEUR BAGOU (tu évalues la réplique de l'utilisateur pour CE tour précis) :
+- score : "weak" si l'utilisateur s'excuse, se justifie, ou rate l'objectif / "ok" si correct mais perfectible / "strong" si assertif et impactant
+- comment : 1 phrase Bagou direct sur CETTE réplique (ce qui marche ou ce qui cloche)
+- modelAnswer : La réponse idéale pour CE contexte précis, au bon moment de la conversation (1-2 phrases, style Bagou, naturel, oral)
+- variants : 3 variantes de cette réponse idéale (safe = prudente, medium = équilibrée, bold = audacieuse)
 
-${isFinal ? `
-3. ÉVALUATION FINALE : C'est le dernier tour. Génère aussi :
-   - modelAnswer : La réponse idéale à la toute première réplique de l'utilisateur (1-2 phrases, style Bagou)
-   - variants : 3 versions (safe/medium/bold) de cette réponse modèle
-   - rating : "easy" si l'ensemble de l'échange était maîtrisé, "medium" si correct mais perfectible, "hard" si l'utilisateur s'est justifié/excusé ou a raté l'objectif
-   - feedback : 1 phrase de bilan sur l'ensemble de l'échange
-
-Première réponse de l'utilisateur à évaluer : "${firstUserMessage}"
-Objectif de la carte : ${card.userGoal}
-À éviter : ${card.antiPatterns?.join(", ") || "aucun"}
-` : ""}`;
+RÔLE 2 — INTERLOCUTEUR (tu joues "${card.otherRole}") :
+- Tu réagis naturellement à ce que vient de dire l'utilisateur
+- Ton réaliste : ni trop facile, ni agressif. Tu testes.
+- 1-2 phrases. Oral et naturel.
+${isFinalTurn ? `
+RÔLE 3 — BILAN FINAL (c'est le dernier tour, analyse l'ensemble de l'échange) :
+- feedback : 1-2 phrases sur la dynamique globale observée dans l'échange entier
+- rating : "easy" si maîtrisé globalement / "medium" si correct mais perfectible / "hard" si l'utilisateur a globalement raté l'objectif
+- pattern : Pattern récurrent observé (ex: "tu tends à sur-expliquer", "bonne assertivité globale", "montée en puissance progressive")
+` : ""}
+Réponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
@@ -430,48 +443,51 @@ Objectif de la carte : ${card.userGoal}
     { role: "user", content: userMessage },
   ];
 
-  const jsonSchema = isFinal
-    ? `{"interlocutorReply":"...","coachWhisper":"...","finalFeedback":{"modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."},"rating":"medium","feedback":"..."}}`
-    : `{"interlocutorReply":"...","coachWhisper":"..."}`;
-
-  messages[0].content += `\n\nRéponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
-
   const start = Date.now();
-  console.log(`[AI] generateCardDialogueTurn: turn ${turnNumber}/${maxTurns}, isFinal=${isFinal}`);
+  console.log(`[AI] generateDialogueTurnWithEval: turn ${turnNumber}/${maxTurns}, isFinal=${isFinalTurn}`);
 
   const response = await openai.chat.completions.create({
     model: GPT_MODEL,
     messages,
     response_format: { type: "json_object" },
-    max_completion_tokens: isFinal ? 500 : 250,
+    max_completion_tokens: isFinalTurn ? 600 : 350,
     temperature: TEMPERATURE,
   });
 
   const elapsed = Date.now() - start;
   const content = response.choices[0]?.message?.content || "{}";
-  console.log(`[AI] generateCardDialogueTurn: ${elapsed}ms`);
+  console.log(`[AI] generateDialogueTurnWithEval: ${elapsed}ms`);
 
   try {
     const parsed = JSON.parse(content);
     return {
+      turnEval: {
+        score: parsed.turnEval?.score || "ok",
+        comment: parsed.turnEval?.comment || "",
+        modelAnswer: parsed.turnEval?.modelAnswer || "",
+        variants: parsed.turnEval?.variants || { safe: "", medium: "", bold: "" },
+      },
       interlocutorReply: parsed.interlocutorReply || "...",
-      coachWhisper: parsed.coachWhisper || "",
-      isFinal,
-      finalFeedback: isFinal && parsed.finalFeedback
+      isFinalTurn,
+      globalDynamic: isFinalTurn && parsed.globalDynamic
         ? {
-            modelAnswer: parsed.finalFeedback.modelAnswer || "",
-            variants: parsed.finalFeedback.variants || { safe: "", medium: "", bold: "" },
-            rating: parsed.finalFeedback.rating || "medium",
-            feedback: parsed.finalFeedback.feedback || "",
+            feedback: parsed.globalDynamic.feedback || "",
+            rating: parsed.globalDynamic.rating || "medium",
+            pattern: parsed.globalDynamic.pattern || "",
           }
         : undefined,
     };
   } catch (e) {
     console.error("[AI] Failed to parse dialogue turn response:", content);
     return {
+      turnEval: {
+        score: "ok",
+        comment: "Évaluation indisponible",
+        modelAnswer: "",
+        variants: { safe: "", medium: "", bold: "" },
+      },
       interlocutorReply: "Je vois...",
-      coachWhisper: "Évaluation indisponible",
-      isFinal,
+      isFinalTurn,
     };
   }
 }
