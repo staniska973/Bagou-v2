@@ -769,7 +769,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
 
   app.post("/api/session/dialogue-turn", async (req, res) => {
     try {
-      const { profileId, cardId, history, userMessage, turnNumber } = req.body;
+      const { profileId, cardId, history, userMessage, turnNumber, isProposalRewrite } = req.body;
 
       if (!profileId || !cardId || !userMessage) {
         return res.status(400).json({ error: "Missing required fields" });
@@ -796,6 +796,11 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
         turnNumber || 1,
         maxTurns
       );
+
+      if (isProposalRewrite && result.turnEval.score !== "strong") {
+        result.turnEval.score = "strong";
+        result.turnEval.comment = "Bien repris — tu as utilisé une des répliques proposées. C'est exactement ça.";
+      }
 
       res.json({ ...result, maxTurns });
     } catch (error) {

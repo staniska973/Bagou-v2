@@ -150,6 +150,7 @@ export default function Session() {
   const [maxTurns, setMaxTurns] = useState(3);
   const [globalDynamic, setGlobalDynamic] = useState<GlobalDynamic | null>(null);
   const [isRewrite, setIsRewrite] = useState(false);
+  const [usedProposal, setUsedProposal] = useState(false);
   const [isRating, setIsRating] = useState(false);
 
   const [userInput, setUserInput] = useState("");
@@ -212,6 +213,7 @@ export default function Session() {
         history: historyForApi,
         userMessage: message,
         turnNumber,
+        isProposalRewrite: usedProposal,
       });
       const data: DialogueTurnResult = await res.json();
 
@@ -232,6 +234,7 @@ export default function Session() {
     setConvoHistory((prev) => prev.slice(0, -1));
     setPendingResult(null);
     setIsRewrite(true);
+    setUsedProposal(prefill !== undefined);
     setPhase("typing");
     if (prefill !== undefined) setUserInput(prefill);
     setTimeout(() => textareaRef.current?.focus(), 50);
@@ -263,6 +266,7 @@ export default function Session() {
 
     setPendingResult(null);
     setIsRewrite(false);
+    setUsedProposal(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -299,6 +303,7 @@ export default function Session() {
       setPendingResult(null);
       setGlobalDynamic(null);
       setIsRewrite(false);
+      setUsedProposal(false);
       setPhase("typing");
 
       if (shouldRequeue) {
