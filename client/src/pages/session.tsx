@@ -149,6 +149,7 @@ export default function Session() {
   const [turnNumber, setTurnNumber] = useState(1);
   const [maxTurns, setMaxTurns] = useState(3);
   const [globalDynamic, setGlobalDynamic] = useState<GlobalDynamic | null>(null);
+  const [isRewrite, setIsRewrite] = useState(false);
   const [isRating, setIsRating] = useState(false);
 
   const [userInput, setUserInput] = useState("");
@@ -230,6 +231,7 @@ export default function Session() {
   const handleRewrite = (prefill?: string) => {
     setConvoHistory((prev) => prev.slice(0, -1));
     setPendingResult(null);
+    setIsRewrite(true);
     setPhase("typing");
     if (prefill !== undefined) setUserInput(prefill);
     setTimeout(() => textareaRef.current?.focus(), 50);
@@ -260,6 +262,7 @@ export default function Session() {
     }
 
     setPendingResult(null);
+    setIsRewrite(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -295,6 +298,7 @@ export default function Session() {
       setTurnNumber(1);
       setPendingResult(null);
       setGlobalDynamic(null);
+      setIsRewrite(false);
       setPhase("typing");
 
       if (shouldRequeue) {
@@ -616,17 +620,30 @@ export default function Session() {
                           )}
 
                           <div className="flex gap-2">
-                            {score === "weak" ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="flex-1 text-xs h-9 gap-1.5"
-                                onClick={() => handleRewrite()}
-                                data-testid="button-rewrite"
-                              >
-                                <RotateCcw className="w-3 h-3" />
-                                Réécrire librement
-                              </Button>
+                            {score === "strong" || isRewrite ? (
+                              <>
+                                {score !== "strong" && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="flex-1 text-xs h-9 gap-1.5"
+                                    onClick={() => handleRewrite()}
+                                    data-testid="button-rewrite"
+                                  >
+                                    <RotateCcw className="w-3 h-3" />
+                                    Réécrire
+                                  </Button>
+                                )}
+                                <Button
+                                  size="sm"
+                                  className="flex-1 text-xs h-9 gap-1.5"
+                                  onClick={handleContinue}
+                                  data-testid="button-continue"
+                                >
+                                  Continuer
+                                  <ChevronRight className="w-3 h-3" />
+                                </Button>
+                              </>
                             ) : score === "ok" ? (
                               <>
                                 <Button
@@ -651,13 +668,14 @@ export default function Session() {
                               </>
                             ) : (
                               <Button
+                                variant="outline"
                                 size="sm"
                                 className="flex-1 text-xs h-9 gap-1.5"
-                                onClick={handleContinue}
-                                data-testid="button-continue"
+                                onClick={() => handleRewrite()}
+                                data-testid="button-rewrite"
                               >
-                                Continuer
-                                <ChevronRight className="w-3 h-3" />
+                                <RotateCcw className="w-3 h-3" />
+                                Réécrire librement
                               </Button>
                             )}
                           </div>
