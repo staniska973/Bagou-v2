@@ -391,6 +391,35 @@ export interface DialogueTurnResult {
   globalDynamic?: GlobalDynamic;
 }
 
+export async function generateOpeningLine(
+  card: MotherCard,
+  profile: UserProfile | null | undefined
+): Promise<string> {
+  const prompt = `Tu joues le rôle de : "${card.otherRole}"
+Relation avec l'utilisateur : ${card.relationship}
+Situation : ${card.situation}
+Enjeu : ${card.stakes}
+${profile?.tuVous === "vous" ? "Utilise le vouvoiement." : "Utilise le tutoiement."}
+
+Ta PREMIÈRE ligne concrète pour lancer la scène. C'est ce que TU dis à l'utilisateur pour déclencher la situation.
+1 à 2 phrases MAX. Direct, réaliste, oral. Parle directement à la personne en face de toi.`;
+
+  const response = await openai.chat.completions.create({
+    model: GPT_MODEL,
+    messages: [
+      {
+        role: "system",
+        content: "Tu joues un personnage dans une mise en scène pédagogique. Réponds UNIQUEMENT avec la réplique d'ouverture, sans guillemets ni préfixe. Langue : français.",
+      },
+      { role: "user", content: prompt },
+    ],
+    temperature: 0.92,
+    max_completion_tokens: 80,
+  });
+
+  return response.choices[0]?.message?.content?.trim() || "";
+}
+
 export async function generateDialogueTurnWithEval(
   profile: UserProfile,
   card: MotherCard,

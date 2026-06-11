@@ -722,6 +722,9 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
         generation_model: settings.generation_model || current.generationProvider,
         bagou_system_extra: settings.bagou_system_extra || "",
         dialogue_turns: parseInt(settings.dialogue_turns || "3"),
+        tts_model: settings.tts_model || "tts-1",
+        tts_voice: settings.tts_voice || "nova",
+        response_timer_seconds: parseInt(settings.response_timer_seconds || "0"),
       });
     } catch (error) {
       console.error("Error fetching admin settings:", error);
@@ -731,12 +734,15 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
 
   app.patch("/api/admin/settings", isAdminSession, async (req: any, res) => {
     try {
-      const { scoring_model, generation_model, bagou_system_extra, dialogue_turns } = req.body;
+      const { scoring_model, generation_model, bagou_system_extra, dialogue_turns, tts_model, tts_voice, response_timer_seconds } = req.body;
 
       if (scoring_model) await storage.setAdminSetting("scoring_model", scoring_model);
       if (generation_model) await storage.setAdminSetting("generation_model", generation_model);
       if (bagou_system_extra !== undefined) await storage.setAdminSetting("bagou_system_extra", bagou_system_extra);
       if (dialogue_turns !== undefined) await storage.setAdminSetting("dialogue_turns", String(dialogue_turns));
+      if (tts_model) await storage.setAdminSetting("tts_model", tts_model);
+      if (tts_voice) await storage.setAdminSetting("tts_voice", tts_voice);
+      if (response_timer_seconds !== undefined) await storage.setAdminSetting("response_timer_seconds", String(response_timer_seconds));
 
       updateAIRuntimeConfig({
         scoringProvider: (scoring_model || getAIRuntimeConfig().scoringProvider) as "gpt" | "gemini",
@@ -752,18 +758,114 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
+  app.get("/api/settings/public", async (req, res) => {
+    try {
+      const settings = await storage.getAllAdminSettings();
+      res.json({
+        response_timer_seconds: parseInt(settings.response_timer_seconds || "0"),
+        dialogue_turns: parseInt(settings.dialogue_turns || "3"),
+      });
+    } catch (error) {
+      res.json({ response_timer_seconds: 0, dialogue_turns: 3 });
+    }
+  });
+
   app.patch("/api/admin/users/:id/subscription", isAdminSession, async (req: any, res) => {
     try {
       const { subscriptionStatus, subscriptionExpiresAt } = req.body;
       const updateData: any = {};
-      if (subscriptionStatus) updateData.subscriptionStatus = subscriptionStatus;
+      if (subscriptionStatus !== undefined) updateData.subscriptionStatus = subscriptionStatus;
       if (subscriptionExpiresAt !== undefined) updateData.subscriptionExpiresAt = subscriptionExpiresAt ? new Date(subscriptionExpiresAt) : null;
 
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
       const [updated] = await dbModule.update(users).set(updateData).where(eq(users.id, req.params.id)).returning();
       res.json(updated);
     } catch (error) {
       console.error("Error updating subscription:", error);
       res.status(500).json({ error: "Failed to update subscription" });
+    }
+  });
+
+  app.delete("/api/admin/users/:id", isAdminSession, async (req: any, res) => {
+    try {
+      const { db: dbModule } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      await dbModule.delete(users).where(eq(users.id, req.params.id));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      res.status(500).json({ error: "Failed to delete user" });
+    }
+  });
+
+  app.get("/api/admin/stats", isAdminSession, async (req: any, res) => {
+    try {
+      const { db: dbModule } = await import("./db");
+      const { users, trainingSessions } = await import("@shared/schema");
+      const { gte, sql: sqlExpr } = await import("drizzle-orm");
+
+      const allUsers = await dbModule.select().from(users);
+      const cardCount = await storage.getMotherCardCount();
+
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const recentSessions = await dbModule.select().from(trainingSessions)
+        .where(gte(trainingSessions.createdAt, sevenDaysAgo));
+
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const newUsersThisMonth = allUsers.filter(u =>
+        u.createdAt && new Date(u.createdAt) >= thirtyDaysAgo
+      ).length;
+
+      const subStats = {
+        none: allUsers.filter(u => !u.subscriptionStatus || u.subscriptionStatus === "none").length,
+        trial: allUsers.filter(u => u.subscriptionStatus === "trial").length,
+        active: allUsers.filter(u => u.subscriptionStatus === "active").length,
+        expired: allUsers.filter(u => u.subscriptionStatus === "expired").length,
+      };
+
+      res.json({
+        totalUsers: allUsers.length,
+        newUsersThisMonth,
+        totalCards: cardCount,
+        sessionsThisWeek: recentSessions.length,
+        subscriptions: subStats,
+        recentUsers: allUsers
+          .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+          .slice(0, 5)
+          .map(u => ({
+            id: u.id,
+            name: `${u.firstName || ""} ${u.lastName || ""}`.trim() || "Anonyme",
+            email: u.email,
+            subscriptionStatus: u.subscriptionStatus,
+            createdAt: u.createdAt,
+          })),
+      });
+    } catch (error) {
+      console.error("Error fetching admin stats:", error);
+      res.status(500).json({ error: "Failed to fetch stats" });
+    }
+  });
+
+  app.post("/api/session/opening", async (req, res) => {
+    try {
+      const { cardId, profileId } = req.body;
+      if (!cardId) return res.status(400).json({ error: "Missing cardId" });
+
+      const card = await storage.getMotherCard(cardId);
+      if (!card) return res.status(404).json({ error: "Card not found" });
+
+      const profile = profileId ? await storage.getProfile(parseInt(profileId)) : null;
+      const { generateOpeningLine } = await import("./ai");
+      const openingLine = await generateOpeningLine(card, profile);
+      res.json({ openingLine });
+    } catch (error) {
+      console.error("Error generating opening line:", error);
+      res.status(500).json({ error: "Failed to generate opening line" });
     }
   });
 

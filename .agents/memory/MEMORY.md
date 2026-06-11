@@ -1,0 +1,3 @@
+- [Session opening line](session-opening-line.md) — `currentCard` must be declared BEFORE any useEffect that reads it; JSX temporal dead zone pitfall.
+- [Admin separate auth](admin-auth.md) — Admin panel uses its own session (not Replit OAuth); credentials via ADMIN_USERNAME/ADMIN_PASSWORD env vars; all admin routes use `isAdminSession` middleware.
+- [Dynamic imports in routes](dynamic-imports-routes.md) — db, users, eq must be imported with `await import(...)` inside route handlers to avoid circular dependency issues at module load time.

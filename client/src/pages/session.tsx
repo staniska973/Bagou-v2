@@ -159,6 +159,8 @@ export default function Session() {
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const openingFetchedRef = useRef<string | null>(null);
+  const [isFetchingOpening, setIsFetchingOpening] = useState(false);
 
   let dueUrl = `/api/flashcards/due/${profileId}`;
   if (mode === "review") {
@@ -190,6 +192,28 @@ export default function Session() {
 
   const currentCard = cardQueue[currentQueueIndex];
   const totalOriginal = dueCards?.length || 0;
+
+  useEffect(() => {
+    const cardId = currentCard?.card?.cardId;
+    if (!cardId || !profileId) return;
+    const fetchKey = `${currentQueueIndex}:${cardId}`;
+    if (openingFetchedRef.current === fetchKey) return;
+    openingFetchedRef.current = fetchKey;
+    setIsFetchingOpening(true);
+    apiRequest("POST", "/api/session/opening", { cardId, profileId })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.openingLine) {
+          setConvoHistory((prev) =>
+            prev.length === 0
+              ? [{ role: "interlocutor" as const, content: data.openingLine }]
+              : prev
+          );
+        }
+      })
+      .catch(() => {})
+      .finally(() => setIsFetchingOpening(false));
+  }, [currentCard?.card?.cardId, currentQueueIndex, profileId]);
 
   const sendMessage = async () => {
     if (!userInput.trim() || !currentCard || !profileId || phase !== "typing") return;
@@ -470,22 +494,42 @@ export default function Session() {
               <div className="flex-shrink-0 px-3 pt-3">
                 <Card className="bg-primary/5 border-primary/20">
                   <CardContent className="p-3">
-                    <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5 mb-2">
                       <Badge variant="secondary" className="text-[10px]" data-testid="badge-theme">
                         {currentCard.card.themeId}
                       </Badge>
                       <Badge variant="outline" className="text-[10px]" data-testid="badge-difficulty">
                         {currentCard.card.difficulty === "n1" ? "Facile" : currentCard.card.difficulty === "n2" ? "Moyen" : "Difficile"}
                       </Badge>
+                      {currentCard.card.channel && (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                          {currentCard.card.channel}
+                        </Badge>
+                      )}
                     </div>
                     <p className="text-sm leading-relaxed font-medium" data-testid="text-situation">
                       {currentCard.card.situation}
                     </p>
-                    <div className="flex items-center gap-1 mt-1.5 text-xs text-muted-foreground">
-                      <span className="font-medium">Toi</span>
-                      <span>({currentCard.card.speakerRole})</span>
-                      <span>→</span>
-                      <span className="font-medium">{currentCard.card.otherRole}</span>
+                    <div className="mt-2 space-y-1">
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
+                        <span className="font-semibold text-foreground/80">Tu es :</span>
+                        <span>{currentCard.card.speakerRole}</span>
+                        <span className="text-muted-foreground/40">·</span>
+                        <span className="font-semibold text-foreground/80">Face à :</span>
+                        <span>{currentCard.card.otherRole}</span>
+                        {currentCard.card.relationship && (
+                          <>
+                            <span className="text-muted-foreground/40">·</span>
+                            <span className="italic">{currentCard.card.relationship}</span>
+                          </>
+                        )}
+                      </div>
+                      {currentCard.card.userGoal && (
+                        <div className="flex items-start gap-1.5 text-xs">
+                          <span className="font-semibold text-foreground/80 shrink-0">Objectif :</span>
+                          <span className="text-muted-foreground">{currentCard.card.userGoal}</span>
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -493,12 +537,15 @@ export default function Session() {
 
               <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
                 {convoHistory.length === 0 && phase === "typing" && (
-                  <div className="text-center text-muted-foreground text-xs py-6">
-                    <p className="mb-1">
-                      Objectif :{" "}
-                      <span className="font-medium text-foreground">{currentCard.card.userGoal}</span>
-                    </p>
-                    <p>Tape ta première réplique ci-dessous</p>
+                  <div className="text-center text-muted-foreground text-xs py-8">
+                    {isFetchingOpening ? (
+                      <div className="flex items-center justify-center gap-2 text-muted-foreground/70">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Mise en situation…</span>
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground/70">Tape ta réplique ci-dessous</p>
+                    )}
                   </div>
                 )}
 
