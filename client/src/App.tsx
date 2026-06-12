@@ -13,6 +13,7 @@ import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Onboarding from "@/pages/onboarding";
 import Home from "@/pages/home";
+import Parcours from "@/pages/parcours";
 import Cards from "@/pages/cards";
 import Vocal from "@/pages/vocal";
 import Stats from "@/pages/stats";
@@ -22,6 +23,7 @@ function AuthenticatedRouter() {
   return (
     <Switch>
       <Route path="/onboarding" component={Onboarding} />
+      <Route path="/parcours" component={Parcours} />
       <Route path="/cards" component={Cards} />
       <Route path="/vocal" component={Vocal} />
       <Route path="/stats" component={Stats} />

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import {
@@ -10,6 +10,7 @@ import {
   User as UserIcon,
   ChevronRight,
   Sparkles,
+  Route as RouteIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,9 +27,16 @@ interface Stats {
   weakCards: number;
 }
 
+interface Theme {
+  id: string;
+  label: string;
+  subthemes: { id: string; label: string }[];
+}
+
 export default function Home() {
   const [, navigate] = useLocation();
   const { user, logout } = useAuth();
+  const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["/api/profiles/user", user?.id],
@@ -47,9 +55,23 @@ export default function Home() {
     enabled: !!profile?.id,
   });
 
+  const { data: themes } = useQuery<Theme[]>({
+    queryKey: ["/api/themes"],
+  });
+
   useEffect(() => {
     if (!profileLoading && !profile) navigate("/onboarding");
   }, [profileLoading, profile, navigate]);
+
+  const orderedThemes = useMemo(() => {
+    if (!themes) return [];
+    const objectives: string[] = profile?.objectives || [];
+    const rank = (id: string) => {
+      const i = objectives.indexOf(id);
+      return i === -1 ? 999 : i;
+    };
+    return [...themes].sort((a, b) => rank(a.id) - rank(b.id));
+  }, [themes, profile?.objectives]);
 
   if (profileLoading || !profile) return <HomeSkeleton />;
 
@@ -59,6 +81,9 @@ export default function Home() {
   const totalCards = stats?.totalCards || 0;
   const hour = new Date().getHours();
   const greeting = hour < 6 ? "Bonne nuit" : hour < 12 ? "Bonjour" : hour < 18 ? "Bon après-midi" : "Bonsoir";
+
+  const themeQuery = selectedTheme ? `?themeId=${encodeURIComponent(selectedTheme)}` : "";
+  const selectedLabel = selectedTheme ? orderedThemes.find((t) => t.id === selectedTheme)?.label : null;
 
   return (
     <div className="min-h-dvh bg-gradient-to-br from-background via-background to-primary/5">
@@ -87,7 +112,7 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="max-w-lg mx-auto px-4 pt-8 pb-6">
+      <div className="max-w-lg mx-auto px-4 pt-8 pb-10">
         <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-greeting">
             {greeting}{user?.firstName ? `, ${user.firstName}` : ""}.
@@ -99,30 +124,83 @@ export default function Home() {
           </p>
         </motion.div>
 
-        <div className="mt-7 space-y-3">
-          <ModeCard
-            testId="card-mode-cartes"
-            onClick={() => navigate("/cards")}
-            icon={<Layers className="w-6 h-6" />}
-            accent="primary"
-            title="Cartes"
-            subtitle="Entraîne ton réflexe à l'écrit. Tu formules, Bagou corrige."
-            meta={dueCards > 0 ? `${dueCards} à revoir` : "Active recall"}
-            delay={0.05}
-          />
-          <ModeCard
-            testId="card-mode-vocal"
-            onClick={() => navigate("/vocal")}
-            icon={<Mic className="w-6 h-6" />}
-            accent="accent"
-            title="Vocal"
-            subtitle="Une vraie conversation, à voix haute. 2 minutes, en situation."
-            meta="Live · 2 min"
-            delay={0.12}
-          />
-        </div>
+        {/* Theme selection */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="mt-6">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2.5 ml-0.5">
+            Choisis ton terrain
+          </p>
+          <div className="flex flex-wrap gap-2" data-testid="group-themes">
+            <ThemeChip
+              label="Tout"
+              active={selectedTheme === null}
+              onClick={() => setSelectedTheme(null)}
+              testId="chip-theme-all"
+            />
+            {orderedThemes.map((t) => (
+              <ThemeChip
+                key={t.id}
+                label={t.label}
+                active={selectedTheme === t.id}
+                onClick={() => setSelectedTheme(t.id)}
+                testId={`chip-theme-${t.id}`}
+              />
+            ))}
+          </div>
+        </motion.div>
 
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="mt-6">
+        {/* Primary CTA: Parcours */}
+        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="mt-5">
+          <Card
+            className="cursor-pointer hover-elevate active-elevate-2 overflow-hidden border-2 border-primary/30 bg-gradient-to-br from-primary/10 via-card to-accent/10"
+            onClick={() => navigate(`/parcours${themeQuery}`)}
+            data-testid="card-parcours"
+          >
+            <CardContent className="p-5">
+              <div className="flex items-center gap-3">
+                <div className="w-14 h-14 rounded-2xl bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                  <RouteIcon className="w-7 h-7" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-lg font-bold">Parcours du jour</h2>
+                  <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">
+                    {selectedLabel ? `Thème : ${selectedLabel}. ` : ""}Écrit, puis oral, puis ton débrief complet.
+                  </p>
+                </div>
+                <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
+              </div>
+              <div className="mt-3 pt-3 border-t border-border/50 flex items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1"><Layers className="w-3 h-3" /> Écrit</span>
+                <ChevronRight className="w-3 h-3" />
+                <span className="flex items-center gap-1"><Mic className="w-3 h-3" /> Oral</span>
+                <ChevronRight className="w-3 h-3" />
+                <span className="flex items-center gap-1"><Sparkles className="w-3 h-3" /> Débrief</span>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Modes libres */}
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.16 }} className="mt-3">
+          <p className="text-[11px] text-muted-foreground mb-2 ml-0.5">Ou entraîne-toi librement</p>
+          <div className="grid grid-cols-2 gap-2">
+            <FreeMode
+              testId="button-mode-cartes"
+              onClick={() => navigate(`/cards${themeQuery}`)}
+              icon={<Layers className="w-4 h-4" />}
+              title="Cartes"
+              subtitle="Écrit seul"
+            />
+            <FreeMode
+              testId="button-mode-vocal"
+              onClick={() => navigate(`/vocal${themeQuery}`)}
+              icon={<Mic className="w-4 h-4" />}
+              title="Vocal"
+              subtitle="Oral seul"
+            />
+          </div>
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.22 }} className="mt-6">
           <div className="grid grid-cols-3 gap-2 mb-3">
             <MiniStat label="À revoir" value={dueCards} />
             <MiniStat label="Maîtrisées" value={masteredCards} />
@@ -142,39 +220,41 @@ export default function Home() {
   );
 }
 
-function ModeCard({ testId, onClick, icon, accent, title, subtitle, meta, delay }: {
+function ThemeChip({ label, active, onClick, testId }: { label: string; active: boolean; onClick: () => void; testId: string }) {
+  return (
+    <button
+      onClick={onClick}
+      data-testid={testId}
+      className={`px-3.5 py-1.5 rounded-full text-sm font-medium border transition-colors hover-elevate active-elevate-2 ${
+        active
+          ? "bg-primary text-primary-foreground border-primary"
+          : "bg-card text-foreground border-border"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function FreeMode({ testId, onClick, icon, title, subtitle }: {
   testId: string;
   onClick: () => void;
   icon: React.ReactNode;
-  accent: "primary" | "accent";
   title: string;
   subtitle: string;
-  meta: string;
-  delay: number;
 }) {
-  const isAccent = accent === "accent";
   return (
-    <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay }}>
-      <Card
-        className={`cursor-pointer hover-elevate active-elevate-2 overflow-hidden border-2 ${isAccent ? "border-accent/25" : "border-primary/25"}`}
-        onClick={onClick}
-        data-testid={testId}
-      >
-        <CardContent className="p-5 flex items-center gap-4">
-          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${isAccent ? "bg-accent/15 text-accent" : "bg-primary/15 text-primary"}`}>
-            {icon}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-bold">{title}</h2>
-              <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${isAccent ? "bg-accent/10 text-accent" : "bg-primary/10 text-primary"}`}>{meta}</span>
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">{subtitle}</p>
-          </div>
-          <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
-        </CardContent>
-      </Card>
-    </motion.div>
+    <Card className="cursor-pointer hover-elevate active-elevate-2" onClick={onClick} data-testid={testId}>
+      <CardContent className="p-3.5 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center shrink-0 text-muted-foreground">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold leading-none">{title}</p>
+          <p className="text-[11px] text-muted-foreground mt-1">{subtitle}</p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
