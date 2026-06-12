@@ -21,6 +21,10 @@ export default function Cards() {
     () => new URLSearchParams(window.location.search).get("themeId") || undefined,
     [],
   );
+  const subthemeId = useMemo(
+    () => new URLSearchParams(window.location.search).get("subthemeId") || undefined,
+    [],
+  );
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["/api/profiles/user", user?.id],
@@ -38,11 +42,13 @@ export default function Cards() {
   const sessionIdRef = useRef<number | null>(null);
 
   const { data: dueCards, isLoading: cardsLoading } = useQuery<FlashcardData[]>({
-    queryKey: ["/api/flashcards/due", profileId, themeId ?? "all"],
+    queryKey: ["/api/flashcards/due", profileId, themeId ?? "all", subthemeId ?? "all"],
     queryFn: async () => {
-      const url = themeId
-        ? `/api/flashcards/due/${profileId}?themeId=${encodeURIComponent(themeId)}`
-        : `/api/flashcards/due/${profileId}`;
+      const params = new URLSearchParams();
+      if (themeId) params.set("themeId", themeId);
+      if (subthemeId) params.set("subthemeId", subthemeId);
+      const qs = params.toString();
+      const url = `/api/flashcards/due/${profileId}${qs ? `?${qs}` : ""}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed");
       return res.json();

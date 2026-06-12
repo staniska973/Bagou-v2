@@ -37,6 +37,7 @@ export default function Home() {
   const [, navigate] = useLocation();
   const { user, logout } = useAuth();
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
+  const [selectedSubtheme, setSelectedSubtheme] = useState<string | null>(null);
 
   const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ["/api/profiles/user", user?.id],
@@ -82,8 +83,24 @@ export default function Home() {
   const hour = new Date().getHours();
   const greeting = hour < 6 ? "Bonne nuit" : hour < 12 ? "Bonjour" : hour < 18 ? "Bon après-midi" : "Bonsoir";
 
-  const themeQuery = selectedTheme ? `?themeId=${encodeURIComponent(selectedTheme)}` : "";
-  const selectedLabel = selectedTheme ? orderedThemes.find((t) => t.id === selectedTheme)?.label : null;
+  const activeTheme = selectedTheme ? orderedThemes.find((t) => t.id === selectedTheme) ?? null : null;
+  const activeSubtheme = activeTheme?.subthemes.find((s) => s.id === selectedSubtheme) || null;
+
+  const themeQuery = (() => {
+    if (!selectedTheme) return "";
+    const params = new URLSearchParams();
+    params.set("themeId", selectedTheme);
+    if (selectedSubtheme) params.set("subthemeId", selectedSubtheme);
+    return `?${params.toString()}`;
+  })();
+  const selectedLabel = activeSubtheme
+    ? `${activeTheme?.label} · ${activeSubtheme.label}`
+    : activeTheme?.label ?? null;
+
+  const selectTheme = (id: string | null) => {
+    setSelectedTheme(id);
+    setSelectedSubtheme(null);
+  };
 
   return (
     <div className="min-h-dvh bg-gradient-to-br from-background via-background to-primary/5">
@@ -133,7 +150,7 @@ export default function Home() {
             <ThemeChip
               label="Tout"
               active={selectedTheme === null}
-              onClick={() => setSelectedTheme(null)}
+              onClick={() => selectTheme(null)}
               testId="chip-theme-all"
             />
             {orderedThemes.map((t) => (
@@ -141,11 +158,40 @@ export default function Home() {
                 key={t.id}
                 label={t.label}
                 active={selectedTheme === t.id}
-                onClick={() => setSelectedTheme(t.id)}
+                onClick={() => selectTheme(t.id)}
                 testId={`chip-theme-${t.id}`}
               />
             ))}
           </div>
+
+          {activeTheme && activeTheme.subthemes.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-3"
+            >
+              <p className="text-[11px] text-muted-foreground mb-2 ml-0.5">
+                Précise (optionnel)
+              </p>
+              <div className="flex flex-wrap gap-2" data-testid="group-subthemes">
+                <ThemeChip
+                  label="Tout le thème"
+                  active={selectedSubtheme === null}
+                  onClick={() => setSelectedSubtheme(null)}
+                  testId="chip-subtheme-all"
+                />
+                {activeTheme.subthemes.map((s) => (
+                  <ThemeChip
+                    key={s.id}
+                    label={s.label}
+                    active={selectedSubtheme === s.id}
+                    onClick={() => setSelectedSubtheme(s.id)}
+                    testId={`chip-subtheme-${s.id}`}
+                  />
+                ))}
+              </div>
+            </motion.div>
+          )}
         </motion.div>
 
         {/* Primary CTA: Parcours */}

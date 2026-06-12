@@ -425,11 +425,19 @@ Pour chaque carte, utilise les parametres suivants:
 ${difficulties.map((d, i) => `Carte ${i + 1}: difficulty="${d}", channel="${channels[i]}", stakes="${stakes[i]}", intent="${intentsForBatch[i]}"`).join("\n")}
 
 REGLES IMPORTANTES:
-- Chaque situation doit etre UNIQUE, REALISTE et DETAILLEE (1-2 phrases)
+- Chaque situation doit etre UNIQUE, REALISTE et CONCRETE (2 a 3 phrases courtes)
+- CONCRET ET AUTO-SUFFISANT (regle n1) : nomme TOUJOURS les details specifiques dont l'utilisateur a besoin pour repondre. INTERDIT de rester vague avec "un projet", "un truc", "quelque chose", "une remarque", "une nouvelle" sans le preciser. Donne le detail exact : QUEL projet (ex: "l'appli de suivi de courses qu'il a codee ce week-end"), QUELLE phrase exacte a ete dite, QUEL objet, QUEL evenement. L'utilisateur doit savoir precisement a quoi il reagit et avoir de la matiere concrete pour formuler sa reponse.
+- NE PRE-ECRIS JAMAIS LA REPONSE DE L'UTILISATEUR (regle n2) : la situation pose UNIQUEMENT le decor et ce que l'interlocuteur dit ou fait, puis s'arrete PILE au moment ou c'est a l'utilisateur de parler. Elle ne doit JAMAIS contenir ni suggerer la replique de l'utilisateur. INTERDIT d'ecrire "Tu lui dis : '...'", "Tu envoies un message pour lui dire : '...'", "Tu reponds que...", "Tu remarques : '...'". C'est a l'utilisateur de formuler sa reponse lui-meme.
+  Exemple INTERDIT : "Ton ami a fait une super presentation sur le climat. Tu lui dis : 'Bravo, c'etait hyper clair !'"
+  Exemple CORRECT : "Ton ami vient de terminer sa presentation sur le climat, visiblement fier de lui. Plusieurs collegues hochent la tete. C'est a toi de reagir."
+- Si l'interlocuteur dit ou fait quelque chose, ECRIS-LE explicitement et cite SES paroles a LUI entre guillemets (ex: "Ton manager lache en reunion : 'On dirait que tu n'as pas vraiment bosse le sujet.'"). L'utilisateur reagit a du concret, jamais a un resume abstrait.
+- PAS DE PLACEHOLDERS : interdit "projet X", "client Y", "entreprise Z", "la societe X", ou toute lettre/symbole qui remplace un vrai detail. Invente un detail concret et credible (ex: "le projet de refonte du site interne", "la cliente du resto d'a cote").
+- GENERAL MAIS PAS TROP : des situations du quotidien que tout le monde peut vivre, mais toujours ancrees dans UN detail concret. Evite l'hyper-niche (jargon metier obscur, chiffres inutiles) ET le flou abstrait.
 - Les situations doivent couvrir des aspects DIFFERENTS du sous-theme
 - Adapte la complexite au niveau de difficulte (n1=debutant, n2=intermediaire, n3=avance)
 - Le channel indique le contexte: "text"=message/SMS/email, "irl"=en personne, "voice"=appel/vocal
 - Varie les roles, relations et contextes entre les cartes
+- userGoal doit etre precis et actionnable, lie aux details concrets de la situation
 - Les antiPatterns doivent etre des erreurs courantes a eviter
 - Les constraints sont des contraintes specifiques a la situation
 - Les variantRules donnent des regles pour generer des reponses safe/medium/bold
@@ -440,12 +448,12 @@ Reponds UNIQUEMENT avec un JSON valide contenant un tableau "cards" de ${batchSi
   "cards": [
     {
       "intent": "string",
-      "situation": "string (1-2 phrases, scenario detaille en francais)",
+      "situation": "string (2-3 phrases concretes et auto-suffisantes en francais ; pose le decor + ce que dit/fait l'interlocuteur, cite SES paroles entre guillemets ; ne contient JAMAIS la reponse de l'utilisateur ; jamais de flou type 'un projet'/'un truc' ni de placeholder 'projet X')",
       "speakerRole": "string (role du joueur, ex: 'collegue', 'ami', 'client')",
       "otherRole": "string (role de l'interlocuteur)",
       "relationship": "string (nature de la relation, ex: 'collegues proches', 'inconnus', 'couple')",
       "stakes": "string (low/medium/high)",
-      "userGoal": "string (objectif precis que l'utilisateur doit atteindre)",
+      "userGoal": "string (objectif precis et actionnable, ancre dans les details concrets de la situation)",
       "constraints": ["string array de contraintes contextuelles"],
       "tags": ["string array de tags pertinents"],
       "antiPatterns": ["string array de comportements a eviter"],
