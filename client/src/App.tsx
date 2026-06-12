@@ -13,18 +13,18 @@ import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Onboarding from "@/pages/onboarding";
 import Home from "@/pages/home";
-import Session from "@/pages/session";
+import Cards from "@/pages/cards";
+import Vocal from "@/pages/vocal";
 import Stats from "@/pages/stats";
-import Roleplay from "@/pages/roleplay";
 import Admin from "@/pages/admin";
 
 function AuthenticatedRouter() {
   return (
     <Switch>
       <Route path="/onboarding" component={Onboarding} />
-      <Route path="/session" component={Session} />
+      <Route path="/cards" component={Cards} />
+      <Route path="/vocal" component={Vocal} />
       <Route path="/stats" component={Stats} />
-      <Route path="/roleplay" component={Roleplay} />
       <Route path="/admin" component={Admin} />
       <Route path="/" component={Home} />
       <Route component={NotFound} />

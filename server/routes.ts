@@ -3,7 +3,7 @@ import type { Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
 import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, updateAIRuntimeConfig, getAIRuntimeConfig } from "./ai";
-import { speechToText, ensureCompatibleFormat } from "./replit_integrations/audio/client";
+import { speechToText, ensureCompatibleFormat, textToSpeech } from "./replit_integrations/audio/client";
 import { insertUserProfileSchema, insertSessionEventSchema } from "@shared/schema";
 import { z } from "zod";
 import { isAuthenticated } from "./replit_integrations/auth";
@@ -239,11 +239,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
         return res.status(404).json({ error: "Card not found" });
       }
 
-      const [result, scoring] = await Promise.all([
-        generateModelAnswer(profile, card, userAnswer),
-        scoreUserAnswer(profile, card, userAnswer, ""),
-      ]);
-
+      const result = await generateModelAnswer(profile, card, userAnswer);
       const finalScoring = await scoreUserAnswer(profile, card, userAnswer, result.modelAnswer);
 
       res.json({
@@ -908,6 +904,25 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     } catch (error) {
       console.error("Error generating dialogue turn:", error);
       res.status(500).json({ error: "Failed to generate dialogue turn" });
+    }
+  });
+
+  app.post("/api/tts", isAuthenticated, async (req, res) => {
+    try {
+      const { text } = req.body;
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({ error: "No text provided" });
+      }
+      const settings = await storage.getAllAdminSettings();
+      const voice = (settings.tts_voice || "nova") as
+        | "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer";
+      const buffer = await textToSpeech(text.slice(0, 1200), voice, "mp3");
+      res.set("Content-Type", "audio/mpeg");
+      res.set("Cache-Control", "no-store");
+      res.send(buffer);
+    } catch (error) {
+      console.error("TTS error:", error);
+      res.status(500).json({ error: "TTS failed" });
     }
   });
 

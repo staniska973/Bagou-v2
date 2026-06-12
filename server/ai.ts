@@ -429,6 +429,7 @@ export async function generateDialogueTurnWithEval(
   maxTurns: number = 3
 ): Promise<DialogueTurnResult> {
   const isFinalTurn = turnNumber >= maxTurns;
+  const lastInterlocutorMsg = [...history].reverse().find((m) => m.role === "assistant")?.content || "";
 
   const jsonSchema = isFinalTurn
     ? `{"turnEval":{"score":"ok","comment":"...","modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."}},"interlocutorReply":"...","globalDynamic":{"feedback":"...","rating":"medium","pattern":"..."}}`
@@ -443,13 +444,19 @@ Rôles : L'utilisateur = "${card.speakerRole}" / Interlocuteur = "${card.otherRo
 Relation : ${card.relationship} | Enjeux : ${card.stakes}
 Objectif de l'utilisateur : ${card.userGoal}
 Anti-patterns à éviter : ${card.antiPatterns?.join(", ") || "aucun"}
+${lastInterlocutorMsg ? `\nDERNIÈRE RÉPLIQUE DE L'INTERLOCUTEUR (à laquelle l'utilisateur répond MAINTENANT) :\n"${lastInterlocutorMsg}"` : ""}
 
 ---
 RÔLE 1 — ÉVALUATEUR BAGOU (tu évalues la réplique de l'utilisateur pour CE tour précis) :
-- score : "weak" si l'utilisateur s'excuse, se justifie, ou rate l'objectif / "ok" si correct mais perfectible / "strong" si assertif et impactant
-- comment : 1 phrase Bagou direct sur CETTE réplique (ce qui marche ou ce qui cloche)
-- modelAnswer : La réponse idéale pour CE contexte précis, au bon moment de la conversation (1-2 phrases, style Bagou, naturel, oral)
-- variants : 3 variantes de cette réponse idéale (safe = prudente, medium = équilibrée, bold = audacieuse)
+
+RÈGLES DE SCORE — applique dans cet ordre, sans exception :
+1. score "weak" OBLIGATOIRE si : réponse d'un ou deux mots seuls ("oui", "non", "ok", "ouais", "peut-être", "d'accord", "bien sûr", "pourquoi pas") / l'utilisateur se justifie ou s'excuse / la réponse ne répond PAS à la dernière réplique de l'interlocuteur / fuite ou changement de sujet / réponse vague qui ne fait pas avancer l'objectif
+2. score "ok" si : la réponse va dans le bon sens, ne tombe dans aucun anti-pattern, mais manque de punch, est trop longue, ou reste en surface
+3. score "strong" SEULEMENT si : 1-2 phrases MAX, directe, assertive, tient le cadre, répond précisément à la dernière réplique ET fait avancer l'objectif
+
+- comment : 1 phrase Bagou tranchante. Si weak → nomme le problème sans ménagement. Si strong → valide avec élan.
+- modelAnswer : Réponse idéale en réaction DIRECTE à la dernière réplique de l'interlocuteur ci-dessus. 1-2 phrases. Oral, naturel, style Bagou. Elle DOIT logiquement répondre à ce que l'interlocuteur vient de dire.
+- variants : 3 alternatives ancrées sur LA MÊME dernière réplique (safe = prudente mais ferme, medium = directe, bold = piquante). Chaque variante est une réponse cohérente à cette dernière réplique.
 
 RÔLE 2 — INTERLOCUTEUR (tu joues "${card.otherRole}") :
 - Tu réagis naturellement à ce que vient de dire l'utilisateur
