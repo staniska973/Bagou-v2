@@ -55,6 +55,30 @@ type Phase = "formulate" | "loading" | "reveal";
 const diffLabel = (d: string) =>
   d === "n1" ? "Facile" : d === "n2" ? "Moyen" : d === "n3" ? "Difficile" : d;
 
+const RATINGS = [
+  {
+    key: "hard" as const,
+    label: "Difficile",
+    Icon: ThumbsDown,
+    base: "border-destructive/40 text-destructive",
+    fill: "bg-destructive text-white border-destructive",
+  },
+  {
+    key: "medium" as const,
+    label: "Moyen",
+    Icon: Minus,
+    base: "border-amber-500/40 text-amber-600 dark:text-amber-400",
+    fill: "bg-amber-500 text-white border-amber-500",
+  },
+  {
+    key: "easy" as const,
+    label: "Maîtrisé",
+    Icon: ThumbsUp,
+    base: "border-accent/50 text-accent",
+    fill: "bg-accent text-white border-accent",
+  },
+];
+
 export function CardStep({
   card,
   profileId,
@@ -70,6 +94,7 @@ export function CardStep({
   const [userAnswer, setUserAnswer] = useState("");
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [isRating, setIsRating] = useState(false);
+  const [selected, setSelected] = useState<Rating | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -106,19 +131,23 @@ export function CardStep({
 
   const rate = async (rating: Rating) => {
     if (isRating) return;
+    setSelected(rating);
     setIsRating(true);
     try {
-      await apiRequest("POST", "/api/flashcards/rate", {
-        profileId,
-        sessionId,
-        cardId: card.cardId,
-        rating,
-        userAnswer,
-      });
+      await Promise.all([
+        apiRequest("POST", "/api/flashcards/rate", {
+          profileId,
+          sessionId,
+          cardId: card.cardId,
+          rating,
+          userAnswer,
+        }),
+        // Keep the confirmation visible long enough to feel satisfying.
+        new Promise((r) => setTimeout(r, 420)),
+      ]);
       onRated(rating, result?.feedback?.oneFix || "", userAnswer);
     } catch {
-      /* ignore */
-    } finally {
+      setSelected(null);
       setIsRating(false);
     }
   };
@@ -296,16 +325,22 @@ export function CardStep({
               </div>
             )}
 
-            <Card className="border-accent/30 bg-accent/5">
-              <CardContent className="p-4">
-                <p className="text-[10px] font-semibold text-accent uppercase tracking-wide flex items-center gap-1 mb-2">
-                  <Lightbulb className="w-3 h-3" /> La réponse Bagou
-                </p>
-                <p className="text-base font-medium leading-relaxed" data-testid="text-card-model-answer">
-                  {result.modelAnswer}
-                </p>
-              </CardContent>
-            </Card>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: "spring", stiffness: 260, damping: 22, delay: 0.05 }}
+            >
+              <Card className="border-accent/30 bg-accent/5">
+                <CardContent className="p-4">
+                  <p className="text-[10px] font-semibold text-accent uppercase tracking-wide flex items-center gap-1 mb-2">
+                    <Lightbulb className="w-3 h-3" /> La réponse Bagou
+                  </p>
+                  <p className="text-base font-medium leading-relaxed" data-testid="text-card-model-answer">
+                    {result.modelAnswer}
+                  </p>
+                </CardContent>
+              </Card>
+            </motion.div>
 
             {result.variants && (
               <div className="space-y-1.5">
@@ -329,38 +364,29 @@ export function CardStep({
             )}
 
             <div className="pt-2">
-              <p className="text-xs text-center text-muted-foreground mb-2">Tu maîtrisais cette réponse&nbsp;?</p>
+              <p className="text-xs text-center text-muted-foreground mb-2">Sois honnête&nbsp;: tu maîtrisais&nbsp;?</p>
               <div className="grid grid-cols-3 gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => rate("hard")}
-                  disabled={isRating}
-                  className="border-destructive/40 text-destructive hover:bg-destructive/10 flex flex-col h-auto py-2.5 gap-1 rounded-xl"
-                  data-testid="button-card-rate-hard"
-                >
-                  <ThumbsDown className="w-4 h-4" />
-                  <span className="text-[11px] font-medium">Difficile</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => rate("medium")}
-                  disabled={isRating}
-                  className="border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 flex flex-col h-auto py-2.5 gap-1 rounded-xl"
-                  data-testid="button-card-rate-medium"
-                >
-                  <Minus className="w-4 h-4" />
-                  <span className="text-[11px] font-medium">Moyen</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => rate("easy")}
-                  disabled={isRating}
-                  className="border-accent/50 text-accent hover:bg-accent/10 flex flex-col h-auto py-2.5 gap-1 rounded-xl"
-                  data-testid="button-card-rate-easy"
-                >
-                  <ThumbsUp className="w-4 h-4" />
-                  <span className="text-[11px] font-medium">Maîtrisé</span>
-                </Button>
+                {RATINGS.map(({ key, label, Icon, base, fill }) => {
+                  const isSel = selected === key;
+                  return (
+                    <motion.button
+                      key={key}
+                      type="button"
+                      onClick={() => rate(key)}
+                      disabled={isRating}
+                      whileTap={{ scale: 0.94 }}
+                      className={`flex flex-col items-center justify-center h-auto py-2.5 gap-1 rounded-xl border font-medium transition-colors ${
+                        isSel
+                          ? fill
+                          : `bg-card hover-elevate active-elevate-2 ${base}`
+                      } ${isRating && !isSel ? "opacity-40" : ""}`}
+                      data-testid={`button-card-rate-${key}`}
+                    >
+                      {isSel ? <CheckCircle2 className="w-4 h-4" /> : <Icon className="w-4 h-4" />}
+                      <span className="text-[11px] font-medium">{label}</span>
+                    </motion.button>
+                  );
+                })}
               </div>
             </div>
           </motion.div>

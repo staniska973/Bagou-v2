@@ -21,6 +21,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { CardStep, type ParcoursCard, type Rating } from "@/components/parcours/card-step";
 import { VocalStep, type GlobalDynamic } from "@/components/parcours/vocal-step";
+import { SessionProgress, StreakBadge, CountUp } from "@/components/parcours/session-ui";
 
 interface FlashcardData {
   card: ParcoursCard;
@@ -239,11 +240,11 @@ export default function Parcours() {
           <div className="w-16 h-16 rounded-full bg-accent/15 flex items-center justify-center mx-auto mb-4">
             <CheckCircle className="w-8 h-8 text-accent" />
           </div>
-          <h2 className="text-2xl font-bold mb-1.5" data-testid="text-parcours-empty">Rien à travailler ici</h2>
+          <h2 className="text-2xl font-bold mb-1.5" data-testid="text-parcours-empty">Tout est à jour.</h2>
           <p className="text-sm text-muted-foreground mb-6">
             {themeId
-              ? "Aucune situation à réviser sur ce thème pour l'instant. Choisis-en un autre."
-              : "Tout est à jour. Reviens un peu plus tard."}
+              ? "Rien à réviser sur ce thème pour l'instant. Choisis-en un autre et on s'y met."
+              : "Rien à travailler maintenant. Reviens tout à l'heure, je t'attends."}
           </p>
           <Button onClick={finish} className="w-full h-12 rounded-xl text-base" data-testid="button-parcours-empty-back">
             Retour à l'accueil
@@ -256,23 +257,25 @@ export default function Parcours() {
   // ÉCRIT
   if (phase === "ecrit") {
     const card = queue[ecritIndex];
-    const progress = queue.length > 0 ? (ecritIndex / queue.length) * 100 : 0;
     return (
       <div className="h-dvh flex flex-col bg-gradient-to-br from-background via-background to-primary/5">
         <div className="flex-shrink-0 px-4 pt-4 pb-2">
-          <div className="max-w-lg mx-auto flex items-center gap-3">
+          <div className="max-w-lg mx-auto flex items-center gap-2.5">
             <Button variant="ghost" size="icon" className="shrink-0 -ml-2" onClick={finish} data-testid="button-parcours-back">
               <ArrowLeft className="w-5 h-5" />
             </Button>
-            <div className="flex items-center gap-1.5 text-xs font-medium text-primary shrink-0">
+            <div className="flex items-center gap-1 text-xs font-medium text-primary shrink-0">
               <PenLine className="w-3.5 h-3.5" /> Écrit
             </div>
-            <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-              <motion.div className="h-full bg-primary rounded-full" initial={false} animate={{ width: `${progress}%` }} transition={{ duration: 0.4 }} />
-            </div>
+            <SessionProgress
+              total={queue.length}
+              results={writtenRef.current.map((w) => w.rating)}
+              currentIndex={ecritIndex}
+            />
             <span className="text-xs font-medium text-muted-foreground tabular-nums shrink-0" data-testid="text-parcours-ecrit-progress">
-              {ecritIndex + 1}/{queue.length}
+              {Math.min(ecritIndex + 1, queue.length)}/{queue.length}
             </span>
+            <StreakBadge streak={profile?.streak || 0} />
           </div>
         </div>
         <div className="flex-1 overflow-y-auto px-4 pb-4">
@@ -388,6 +391,9 @@ export default function Parcours() {
         <div className="flex items-center gap-1.5 text-sm font-semibold">
           <Trophy className="w-4 h-4 text-accent" /> Débrief du parcours
         </div>
+        <div className="ml-auto">
+          <StreakBadge streak={profile?.streak || 0} />
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-6">
@@ -395,13 +401,17 @@ export default function Parcours() {
           <div className="grid grid-cols-2 gap-2">
             <Card className="border-accent/30 bg-accent/5">
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold text-accent" data-testid="text-parcours-validated">{validated}</p>
+                <p className="text-2xl font-bold text-accent" data-testid="text-parcours-validated">
+                  <CountUp value={validated} />
+                </p>
                 <p className="text-[11px] text-muted-foreground">validée{validated > 1 ? "s" : ""}</p>
               </CardContent>
             </Card>
             <Card className="border-destructive/20">
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold" data-testid="text-parcours-towork">{toWork}</p>
+                <p className="text-2xl font-bold" data-testid="text-parcours-towork">
+                  <CountUp value={toWork} />
+                </p>
                 <p className="text-[11px] text-muted-foreground">à ancrer</p>
               </CardContent>
             </Card>
