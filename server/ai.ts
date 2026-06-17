@@ -402,14 +402,16 @@ Enjeu : ${card.stakes}
 ${profile?.tuVous === "vous" ? "Utilise le vouvoiement." : "Utilise le tutoiement."}
 
 Ta PREMIÈRE ligne concrète pour lancer la scène. C'est ce que TU dis à l'utilisateur pour déclencher la situation.
-1 à 2 phrases MAX. Direct, réaliste, oral. Parle directement à la personne en face de toi.`;
+1 à 2 phrases MAX. Direct, réaliste, oral. Parle directement à la personne en face de toi.
+
+RÈGLE ABSOLUE : tu n'es QUE l'interlocuteur "${card.otherRole}". Tu ne souffles jamais, ne suggères jamais et ne formules jamais à la place de l'utilisateur ce qu'il devrait te répondre. Aucun conseil, aucun coaching, aucun exemple de réponse, aucun méta-commentaire — uniquement ta réplique d'interlocuteur.`;
 
   const response = await openai.chat.completions.create({
     model: GPT_MODEL,
     messages: [
       {
         role: "system",
-        content: "Tu joues un personnage dans une mise en scène pédagogique. Réponds UNIQUEMENT avec la réplique d'ouverture, sans guillemets ni préfixe. Langue : français.",
+        content: "Tu joues UNIQUEMENT le personnage de l'interlocuteur dans une mise en scène pédagogique. Tu ne dis JAMAIS la réplique de l'utilisateur ni le moindre indice sur ce qu'il devrait répondre : tu lui lances seulement la situation. Réponds UNIQUEMENT avec ta réplique d'ouverture, sans guillemets ni préfixe. Langue : français.",
       },
       { role: "user", content: prompt },
     ],
@@ -462,6 +464,7 @@ RÔLE 2 — INTERLOCUTEUR (tu joues "${card.otherRole}") :
 - Tu réagis naturellement à ce que vient de dire l'utilisateur
 - Ton réaliste : ni trop facile, ni agressif. Tu testes, tu résistes, tu relances.
 - 1-2 phrases maximum. Oral et naturel.
+- RÈGLE ABSOLUE : "interlocutorReply" ne contient QUE les mots que l'interlocuteur dit à voix haute. JAMAIS la réponse attendue de l'utilisateur, jamais un conseil, un indice, un exemple de formulation ou un coaching. La réponse modèle et les variantes restent EXCLUSIVEMENT dans "turnEval" (le seul champ dit à voix haute est "interlocutorReply").
 ${!isFinalTurn ? `- IMPÉRATIF : ne ferme JAMAIS la conversation. Pose une question, exprime un doute, fais une remarque qui oblige l'utilisateur à répondre. L'échange doit continuer.` : `- C'est le dernier tour : tu peux conclure naturellement.`}
 ${isFinalTurn ? `
 RÔLE 3 — BILAN FINAL (c'est le dernier tour, analyse l'ensemble de l'échange) :

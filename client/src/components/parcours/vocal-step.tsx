@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Loader2, Sparkles } from "lucide-react";
+import { Mic, Square, Loader2, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiRequest } from "@/lib/queryClient";
@@ -13,8 +13,10 @@ export interface GlobalDynamic {
 }
 
 type Phase = "intro" | "speaking" | "listening" | "thinking" | "ending";
+type Msg = { role: "user" | "assistant"; content: string };
 
 const SESSION_SECONDS = 120;
+const NUM_BARS = 7;
 
 export function VocalStep({
   card,
@@ -26,19 +28,24 @@ export function VocalStep({
   onComplete: (gd: GlobalDynamic | null, transcript: string) => void;
 }) {
   const [phase, setPhase] = useState<Phase>("intro");
-  const [caption, setCaption] = useState("");
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [micError, setMicError] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const historyRef = useRef<Msg[]>([]);
   const turnRef = useRef(1);
   const startTimeRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startingRef = useRef(false);
   const doneRef = useRef(false);
+  const cancelledRef = useRef(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const cleanupAudio = () => {
     if (audioRef.current) {
@@ -52,16 +59,36 @@ export function VocalStep({
       timerRef.current = null;
     }
   };
+  const cleanupMeter = () => {
+    try {
+      sourceRef.current?.disconnect();
+    } catch {
+      /* noop */
+    }
+    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+      audioCtxRef.current.close().catch(() => {});
+    }
+    sourceRef.current = null;
+    analyserRef.current = null;
+    audioCtxRef.current = null;
+  };
 
   useEffect(
     () => () => {
+      cancelledRef.current = true;
       cleanupAudio();
       stopTimer();
+      cleanupMeter();
       if (recorderRef.current?.state === "recording") recorderRef.current.stop();
       streamRef.current?.getTracks().forEach((t) => t.stop());
     },
     [],
   );
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages, phase]);
 
   const buildTranscript = () =>
     [
@@ -112,6 +139,27 @@ export function VocalStep({
     }
   }, []);
 
+  const setupAnalyser = useCallback((stream: MediaStream) => {
+    if (analyserRef.current) return;
+    try {
+      const Ctx: typeof AudioContext =
+        window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.7;
+      source.connect(analyser);
+      audioCtxRef.current = ctx;
+      analyserRef.current = analyser;
+      sourceRef.current = source;
+      ctx.resume?.().catch(() => {});
+    } catch {
+      /* meter is optional — never block recording */
+    }
+  }, []);
+
   const conclude = useCallback(
     (gd: GlobalDynamic | null) => {
       if (doneRef.current) return;
@@ -126,7 +174,7 @@ export function VocalStep({
 
   const submitUserMessage = useCallback(
     async (text: string) => {
-      setCaption("");
+      setMessages((prev) => [...prev, { role: "user", content: text }]);
       setPhase("thinking");
 
       const overTime = Date.now() - startTimeRef.current >= (SESSION_SECONDS - 8) * 1000;
@@ -141,30 +189,36 @@ export function VocalStep({
           turnNumber: turnToSend,
         });
         const data = await res.json();
+        if (cancelledRef.current) return;
 
         historyRef.current = [
           ...historyRef.current,
           { role: "user", content: text },
           { role: "assistant", content: data.interlocutorReply },
         ];
+        setMessages((prev) => [...prev, { role: "assistant", content: data.interlocutorReply }]);
 
         if (data.isFinalTurn || overTime) {
-          setCaption(data.interlocutorReply);
+          setPhase("speaking");
           await playTTS(data.interlocutorReply);
           conclude(data.globalDynamic || null);
           return;
         }
 
         turnRef.current += 1;
-        setCaption(data.interlocutorReply);
         setPhase("speaking");
         await playTTS(data.interlocutorReply);
         startListening();
       } catch {
+        if (cancelledRef.current) return;
+        // The turn failed: drop the optimistic user bubble so the view stays
+        // consistent with historyRef, then let the user say it again.
+        setMessages((prev) => prev.slice(0, -1));
         setPhase("listening");
         startListening();
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [card.cardId, profileId, playTTS, conclude],
   );
 
@@ -175,6 +229,7 @@ export function VocalStep({
         const fd = new FormData();
         fd.append("audio", blob, `rec.${mime.includes("webm") ? "webm" : "mp4"}`);
         const r = await fetch("/api/transcribe", { method: "POST", body: fd });
+        if (cancelledRef.current) return;
         if (r.ok) {
           const { text } = await r.json();
           if (text?.trim()) {
@@ -185,16 +240,19 @@ export function VocalStep({
       } catch {
         /* ignore */
       }
+      if (cancelledRef.current) return;
       setPhase("listening");
       startListening();
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [submitUserMessage],
   );
 
   const startListening = useCallback(async () => {
-    if (doneRef.current) return;
+    if (doneRef.current || cancelledRef.current) return;
     const stream = await ensureStream();
-    if (!stream) return;
+    if (!stream || cancelledRef.current) return;
+    setupAnalyser(stream);
     const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
     const recorder = new MediaRecorder(stream, { mimeType: mime });
     const chunks: Blob[] = [];
@@ -202,12 +260,13 @@ export function VocalStep({
       if (e.data.size > 0) chunks.push(e.data);
     };
     recorder.onstop = () => {
+      if (cancelledRef.current) return;
       handleUserAudio(new Blob(chunks, { type: mime }), mime);
     };
     recorder.start();
     recorderRef.current = recorder;
     setPhase("listening");
-  }, [ensureStream, handleUserAudio]);
+  }, [ensureStream, handleUserAudio, setupAnalyser]);
 
   const stopListening = () => {
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
@@ -219,12 +278,14 @@ export function VocalStep({
     setMicError(false);
     historyRef.current = [];
     turnRef.current = 1;
+    setMessages([]);
 
     const stream = await ensureStream();
     if (!stream) {
       startingRef.current = false;
       return;
     }
+    setupAnalyser(stream);
 
     try {
       setPhase("speaking");
@@ -245,30 +306,22 @@ export function VocalStep({
 
       if (opening) {
         historyRef.current = [{ role: "assistant", content: opening }];
-        setCaption(opening);
+        setMessages([{ role: "assistant", content: opening }]);
         await playTTS(opening);
       }
       startListening();
     } finally {
       startingRef.current = false;
     }
-  }, [card.cardId, profileId, ensureStream, playTTS, startListening]);
+  }, [card.cardId, profileId, ensureStream, setupAnalyser, playTTS, startListening]);
 
   const timerPct = Math.min((elapsed / SESSION_SECONDS) * 100, 100);
-  const orbState =
-    phase === "speaking"
-      ? "speaking"
-      : phase === "listening"
-        ? "listening"
-        : phase === "thinking"
-          ? "thinking"
-          : "idle";
 
   if (phase === "intro") {
     return (
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md mx-auto">
         <p className="text-xs font-semibold text-accent uppercase tracking-wide mb-3 text-center">Mise en situation</p>
-        <Card className="border-primary/15 bg-card/80 mb-5">
+        <Card className="border-primary/15 bg-card/80 mb-4">
           <CardContent className="p-5 text-left">
             <p className="text-base leading-relaxed font-medium mb-3" data-testid="text-vocal-situation">
               {card.situation}
@@ -282,16 +335,23 @@ export function VocalStep({
                 <span className="font-semibold text-foreground/70">Face à&nbsp;:</span> {card.otherRole}
               </span>
             </div>
-            {card.userGoal && (
-              <div className="mt-2 flex items-start gap-1.5 text-xs">
-                <Sparkles className="w-3.5 h-3.5 text-accent shrink-0 mt-0.5" />
-                <span className="text-muted-foreground">{card.userGoal}</span>
-              </div>
-            )}
           </CardContent>
         </Card>
+
+        {card.userGoal && (
+          <div
+            className="flex items-start gap-2 rounded-xl bg-accent/10 border border-accent/20 px-3.5 py-2.5 mb-4"
+            data-testid="text-vocal-objective-intro"
+          >
+            <Target className="w-4 h-4 text-accent shrink-0 mt-0.5" />
+            <p className="text-sm text-left leading-snug">
+              <span className="font-semibold">Ton objectif&nbsp;:</span> {card.userGoal}
+            </p>
+          </div>
+        )}
+
         <p className="text-sm text-muted-foreground mb-4 text-center">
-          Tu vas parler à voix haute. L'autre te répond. Reste naturel, vise ton objectif.
+          L'autre te lance la conversation. À toi de répondre à voix haute&nbsp;— tu verras à l'écran ce qui a été compris.
         </p>
         <Button
           onClick={beginConversation}
@@ -306,119 +366,182 @@ export function VocalStep({
   }
 
   return (
-    <div className="w-full max-w-md mx-auto flex flex-col items-center">
-      <Orb state={orbState} progressPct={timerPct} />
-
-      <div className="h-24 mt-8 flex flex-col items-center justify-start text-center">
-        <AnimatePresence mode="wait">
-          <motion.p
-            key={caption + orbState}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="text-[15px] leading-relaxed text-foreground/90 max-w-sm"
-            data-testid="text-vocal-caption"
-          >
-            {phase === "thinking" ? "…" : caption}
-          </motion.p>
-        </AnimatePresence>
-        <p className="text-xs text-muted-foreground mt-2">
-          {phase === "speaking"
-            ? `${card.otherRole} parle…`
-            : phase === "listening"
-              ? "À toi — parle, puis appuie sur stop"
-              : phase === "ending"
-                ? "Conversation terminée"
-                : "Bagou réfléchit…"}
+    <div className="w-full max-w-md mx-auto h-full flex flex-col py-2">
+      {/* Objective — always visible so the user knows their goal */}
+      <div
+        className="flex-shrink-0 flex items-start gap-2 rounded-xl bg-accent/10 border border-accent/20 px-3 py-2"
+        data-testid="text-vocal-objective"
+      >
+        <Target className="w-3.5 h-3.5 text-accent shrink-0 mt-0.5" />
+        <p className="text-xs text-left leading-snug text-foreground/85">
+          <span className="font-semibold">Objectif&nbsp;:</span> {card.userGoal || card.situation}
         </p>
       </div>
 
-      <div className="mt-6 h-20 flex items-center justify-center">
-        {phase === "listening" ? (
-          <Button
-            size="icon"
-            variant="destructive"
-            className="w-20 h-20 rounded-full shadow-xl"
-            onClick={stopListening}
-            data-testid="button-vocal-stop"
-          >
-            <Square className="w-7 h-7 fill-current" />
-          </Button>
-        ) : (
-          <div className="w-20 h-20 rounded-full bg-muted/40 flex items-center justify-center">
-            {phase === "thinking" || phase === "ending" ? (
-              <Loader2 className="w-7 h-7 text-muted-foreground animate-spin" />
-            ) : (
-              <Mic className="w-7 h-7 text-muted-foreground/50" />
-            )}
+      {/* Session timer */}
+      <div className="flex-shrink-0 h-1 rounded-full bg-muted overflow-hidden mt-2">
+        <div className="h-full bg-primary/40 transition-all duration-300" style={{ width: `${timerPct}%` }} />
+      </div>
+
+      {/* Conversation transcript */}
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto space-y-2.5 py-3 px-0.5" data-testid="list-vocal-conversation">
+        <AnimatePresence initial={false}>
+          {messages.map((m, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[82%] rounded-2xl px-3.5 py-2 ${
+                  m.role === "user" ? "bg-primary/10 rounded-br-sm" : "bg-muted rounded-bl-sm"
+                }`}
+              >
+                <p
+                  className={`text-[10px] font-semibold uppercase tracking-wide mb-0.5 ${
+                    m.role === "user" ? "text-primary/70" : "text-muted-foreground"
+                  }`}
+                >
+                  {m.role === "user" ? "Toi" : card.otherRole}
+                </p>
+                <p className="text-[14px] leading-snug text-left text-foreground/90" data-testid={`text-vocal-turn-${i}`}>
+                  {m.content}
+                </p>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
+        {phase === "thinking" && (
+          <div className="flex justify-start">
+            <div className="bg-muted rounded-2xl rounded-bl-sm px-4 py-3">
+              <TypingDots />
+            </div>
           </div>
         )}
+      </div>
+
+      {/* Control dock — turn cue + real mic meter + button */}
+      <div className="flex-shrink-0 pt-2">
+        <div className="h-8 flex items-center justify-center">
+          {phase === "listening" ? (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="flex items-center gap-2 text-accent"
+              data-testid="status-vocal-turn"
+            >
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-60" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-accent" />
+              </span>
+              <span className="text-sm font-semibold">À toi de parler</span>
+            </motion.div>
+          ) : (
+            <p className="text-xs text-muted-foreground" data-testid="status-vocal-turn">
+              {phase === "speaking"
+                ? `${card.otherRole} parle…`
+                : phase === "thinking"
+                  ? `${card.otherRole} réfléchit…`
+                  : phase === "ending"
+                    ? "Conversation terminée"
+                    : ""}
+            </p>
+          )}
+        </div>
+
+        <div className="h-12 flex items-end justify-center my-2">
+          <MicMeter analyser={analyserRef.current} active={phase === "listening"} />
+        </div>
+
+        <div className="flex items-center justify-center h-20">
+          {phase === "listening" ? (
+            <Button
+              size="icon"
+              variant="destructive"
+              className="w-16 h-16 rounded-full shadow-xl"
+              onClick={stopListening}
+              data-testid="button-vocal-stop"
+            >
+              <Square className="w-6 h-6 fill-current" />
+            </Button>
+          ) : (
+            <div className="w-16 h-16 rounded-full bg-muted/40 flex items-center justify-center">
+              {phase === "thinking" || phase === "ending" ? (
+                <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+              ) : (
+                <Mic className="w-6 h-6 text-muted-foreground/50" />
+              )}
+            </div>
+          )}
+        </div>
+        <p className="h-4 text-center text-[11px] text-muted-foreground">
+          {phase === "listening" ? "Appuie quand tu as fini de parler" : ""}
+        </p>
       </div>
     </div>
   );
 }
 
-function Orb({ state, progressPct }: { state: "speaking" | "listening" | "thinking" | "idle"; progressPct: number }) {
-  const color =
-    state === "listening"
-      ? "hsl(var(--accent))"
-      : state === "thinking"
-        ? "hsl(var(--muted-foreground))"
-        : "hsl(var(--primary))";
+function MicMeter({ analyser, active }: { analyser: AnalyserNode | null; active: boolean }) {
+  const [bars, setBars] = useState<number[]>(() => new Array(NUM_BARS).fill(0));
+  const rafRef = useRef<number | null>(null);
 
-  const r = 90;
-  const circumference = 2 * Math.PI * r;
+  useEffect(() => {
+    if (!active || !analyser) {
+      setBars(new Array(NUM_BARS).fill(0));
+      return;
+    }
+    const freq = new Uint8Array(analyser.frequencyBinCount);
+    const usable = Math.max(NUM_BARS, Math.floor(analyser.frequencyBinCount * 0.6));
+    const step = Math.max(1, Math.floor(usable / NUM_BARS));
+
+    const tick = () => {
+      analyser.getByteFrequencyData(freq);
+      const next: number[] = [];
+      for (let i = 0; i < NUM_BARS; i++) {
+        let sum = 0;
+        for (let j = 0; j < step; j++) sum += freq[i * step + j] || 0;
+        next.push(Math.min(1, sum / step / 190));
+      }
+      setBars(next);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    tick();
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, [active, analyser]);
 
   return (
-    <div className="relative w-56 h-56 flex items-center justify-center">
-      <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 224 224">
-        <circle cx="112" cy="112" r={r} fill="none" stroke="hsl(var(--muted))" strokeWidth="3" opacity="0.4" />
-        <circle
-          cx="112"
-          cy="112"
-          r={r}
-          fill="none"
-          stroke={color}
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - progressPct / 100)}
-          style={{ transition: "stroke-dashoffset 0.3s linear" }}
-        />
-      </svg>
-
-      {[0, 1, 2].map((i) => (
-        <motion.div
+    <div className="flex items-center justify-center gap-1.5 h-full" data-testid="mic-level-meter" aria-hidden="true">
+      {bars.map((v, i) => (
+        <div
           key={i}
-          className="absolute rounded-full"
-          style={{ width: 150, height: 150, border: `1.5px solid ${color}` }}
-          animate={
-            state === "speaking"
-              ? { scale: [1, 1.35, 1], opacity: [0.5, 0, 0.5] }
-              : state === "listening"
-                ? { scale: [1, 1.18, 1], opacity: [0.45, 0.1, 0.45] }
-                : { scale: 1, opacity: 0.12 }
-          }
-          transition={{ duration: state === "speaking" ? 1.8 : 2.4, repeat: Infinity, delay: i * 0.5, ease: "easeOut" }}
+          className={`w-2.5 rounded-full transition-[height,background-color] duration-75 ${
+            active ? "bg-accent" : "bg-muted-foreground/25"
+          }`}
+          style={{ height: `${Math.max(10, v * 100)}%` }}
         />
       ))}
+    </div>
+  );
+}
 
-      <motion.div
-        className="relative rounded-full"
-        style={{ width: 130, height: 130, background: `radial-gradient(circle at 35% 30%, ${color}, hsl(var(--primary)))` }}
-        animate={
-          state === "thinking"
-            ? { scale: [1, 1.04, 1] }
-            : state === "listening"
-              ? { scale: [1, 1.08, 1] }
-              : state === "speaking"
-                ? { scale: [1, 1.12, 1] }
-                : { scale: 1 }
-        }
-        transition={{ duration: state === "thinking" ? 2.2 : state === "speaking" ? 0.7 : 1.4, repeat: Infinity, ease: "easeInOut" }}
-      >
-        <div className="absolute inset-0 rounded-full" style={{ boxShadow: `0 0 60px 8px ${color}55` }} />
-      </motion.div>
+function TypingDots() {
+  return (
+    <div className="flex items-center gap-1" data-testid="indicator-vocal-thinking">
+      {[0, 1, 2].map((i) => (
+        <motion.span
+          key={i}
+          className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60"
+          animate={{ opacity: [0.3, 1, 0.3], y: [0, -2, 0] }}
+          transition={{ duration: 1, repeat: Infinity, delay: i * 0.18, ease: "easeInOut" }}
+        />
+      ))}
     </div>
   );
 }
