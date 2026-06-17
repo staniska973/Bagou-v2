@@ -1264,6 +1264,8 @@ function AISettingsSection() {
   );
 }
 
+type LeakRow = { cardId: string; themeId: string; subthemeId: string; situation: string; matches: string[] };
+
 function CardsSection() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTheme, setSelectedTheme] = useState<string>("all");
@@ -1275,6 +1277,86 @@ function CardsSection() {
 
   const queryParams = new URLSearchParams({ language: "fr" });
   if (selectedTheme && selectedTheme !== "all") queryParams.set("themeId", selectedTheme);
+
+  const [leakData, setLeakData] = useState<{ total: number; leakCount: number; leaks: LeakRow[] } | null>(null);
+  const [fixingIds, setFixingIds] = useState<Set<string>>(new Set());
+  const [fixingAll, setFixingAll] = useState(false);
+  const [fixProgress, setFixProgress] = useState({ done: 0, total: 0 });
+
+  const scanLeaks = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/admin/cards/leaks?language=fr", { credentials: "include" });
+      if (!res.ok) throw new Error("Échec de l'analyse");
+      return res.json() as Promise<{ total: number; leakCount: number; leaks: LeakRow[] }>;
+    },
+    onSuccess: (data) => setLeakData(data),
+    onError: (error: Error) => toast({ title: "Erreur", description: error.message, variant: "destructive" }),
+  });
+
+  const fixOneLeak = async (cardId: string): Promise<{ stillLeaks: boolean; matches: string[] }> => {
+    const res = await apiRequest("POST", `/api/admin/cards/${cardId}/fix-leak`);
+    const data = await res.json();
+    return { stillLeaks: !!data.stillLeaks, matches: data.matches || [] };
+  };
+
+  const handleFix = async (cardId: string) => {
+    setFixingIds((s) => new Set(s).add(cardId));
+    try {
+      const { stillLeaks, matches } = await fixOneLeak(cardId);
+      if (stillLeaks) {
+        // Rewrite ran but the card still leaks — keep it in the list (with the
+        // updated matches) so the admin knows it needs a manual edit.
+        setLeakData((prev) =>
+          prev
+            ? { ...prev, leaks: prev.leaks.map((l) => (l.cardId === cardId ? { ...l, matches } : l)) }
+            : prev,
+        );
+        toast({
+          title: "Toujours une fuite",
+          description: `${cardId} reste à corriger manuellement`,
+          variant: "destructive",
+        });
+      } else {
+        setLeakData((prev) =>
+          prev ? { ...prev, leakCount: prev.leakCount - 1, leaks: prev.leaks.filter((l) => l.cardId !== cardId) } : prev,
+        );
+        toast({ title: "Carte corrigée", description: cardId });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/mother-cards"] });
+    } catch (e: any) {
+      toast({ title: "Erreur", description: e?.message || "Échec de la correction", variant: "destructive" });
+    } finally {
+      setFixingIds((s) => {
+        const n = new Set(s);
+        n.delete(cardId);
+        return n;
+      });
+    }
+  };
+
+  const handleFixAll = async () => {
+    if (!leakData || leakData.leaks.length === 0) return;
+    setFixingAll(true);
+    const list = [...leakData.leaks];
+    setFixProgress({ done: 0, total: list.length });
+    let failed = 0;
+    for (let i = 0; i < list.length; i++) {
+      try {
+        const { stillLeaks } = await fixOneLeak(list[i].cardId);
+        if (stillLeaks) failed++;
+      } catch {
+        failed++;
+      }
+      setFixProgress({ done: i + 1, total: list.length });
+    }
+    setFixingAll(false);
+    queryClient.invalidateQueries({ queryKey: ["/api/mother-cards"] });
+    scanLeaks.mutate();
+    toast({
+      title: "Correction terminée",
+      description: failed ? `${failed} carte(s) encore à corriger` : "Toutes les fuites traitées",
+    });
+  };
 
   const { data: cards, isLoading } = useQuery<MotherCard[]>({
     queryKey: ["/api/mother-cards", selectedTheme],
@@ -1362,7 +1444,95 @@ function CardsSection() {
             {filteredCards.length} carte{filteredCards.length > 1 ? "s" : ""}
           </Badge>
         )}
+        <Button
+          variant="outline"
+          className="shrink-0 gap-2"
+          onClick={() => scanLeaks.mutate()}
+          disabled={scanLeaks.isPending}
+          data-testid="button-scan-leaks"
+        >
+          {scanLeaks.isPending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+          Vérifier les fuites
+        </Button>
       </div>
+
+      {leakData && (
+        <Card data-testid="panel-leaks">
+          <CardContent className="p-4">
+            {leakData.leakCount === 0 ? (
+              <div className="flex items-center gap-2 text-sm text-emerald-600" data-testid="text-no-leaks">
+                <CheckCircle2 className="w-4 h-4" />
+                Aucune fuite détectée sur {leakData.total} cartes — les situations ne dévoilent pas la réponse.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 text-sm font-medium text-amber-600" data-testid="text-leak-count">
+                    <AlertCircle className="w-4 h-4" />
+                    {leakData.leakCount} fuite{leakData.leakCount > 1 ? "s" : ""} détectée{leakData.leakCount > 1 ? "s" : ""} sur {leakData.total} cartes
+                  </div>
+                  <Button
+                    size="sm"
+                    className="gap-2"
+                    onClick={handleFixAll}
+                    disabled={fixingAll}
+                    data-testid="button-fix-all-leaks"
+                  >
+                    {fixingAll ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {fixingAll ? `Correction ${fixProgress.done}/${fixProgress.total}` : "Tout corriger (IA)"}
+                  </Button>
+                </div>
+                <div className="space-y-2 max-h-[420px] overflow-y-auto">
+                  {leakData.leaks.map((leak) => (
+                    <div key={leak.cardId} className="border rounded-lg p-3 space-y-2" data-testid={`row-leak-${leak.cardId}`}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-mono text-muted-foreground">{leak.cardId}</span>
+                        <Badge variant="secondary" className="text-[10px]">{leak.themeId}</Badge>
+                        {leak.matches.map((m, i) => (
+                          <Badge key={i} variant="outline" className="text-[10px] text-red-500 border-red-300">{m}</Badge>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">{leak.situation}</p>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-2 h-8"
+                          onClick={() => handleFix(leak.cardId)}
+                          disabled={fixingIds.has(leak.cardId) || fixingAll}
+                          data-testid={`button-fix-leak-${leak.cardId}`}
+                        >
+                          {fixingIds.has(leak.cardId) ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                          Corriger (IA)
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="gap-2 h-8"
+                          onClick={() => {
+                            const full = cards?.find((c) => c.cardId === leak.cardId);
+                            if (full) {
+                              openEditModal(full);
+                            } else {
+                              setSelectedTheme("all");
+                              setSearchQuery(leak.cardId);
+                              toast({ title: "Carte filtrée", description: "Retrouve-la dans le tableau ci-dessous." });
+                            }
+                          }}
+                          data-testid={`button-edit-leak-${leak.cardId}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          Éditer
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="p-0">

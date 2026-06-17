@@ -709,6 +709,56 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
+  app.get("/api/admin/cards/leaks", isAdminSession, async (req: any, res) => {
+    try {
+      const { detectSituationLeak } = await import("./leak-detection");
+      const language = (req.query.language as string) || "fr";
+      const cards = await storage.getAllMotherCards(language);
+      const leaks = cards
+        .map((c) => ({ card: c, result: detectSituationLeak(c.situation) }))
+        .filter((x) => x.result.isLeak)
+        .map((x) => ({
+          cardId: x.card.cardId,
+          themeId: x.card.themeId,
+          subthemeId: x.card.subthemeId,
+          situation: x.card.situation,
+          matches: x.result.matches,
+        }));
+      res.json({ total: cards.length, leakCount: leaks.length, leaks });
+    } catch (error) {
+      console.error("Error scanning card leaks:", error);
+      res.status(500).json({ error: "Failed to scan card leaks" });
+    }
+  });
+
+  app.post("/api/admin/cards/:cardId/fix-leak", isAdminSession, async (req: any, res) => {
+    try {
+      const { rewriteSituationWithoutLeak, detectSituationLeak } = await import("./leak-detection");
+      const card = await storage.getMotherCard(req.params.cardId);
+      if (!card) {
+        return res.status(404).json({ error: "Card not found" });
+      }
+      let newSituation = card.situation;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        newSituation = await rewriteSituationWithoutLeak({
+          situation: newSituation,
+          otherRole: card.otherRole,
+          speakerRole: card.speakerRole,
+          relationship: card.relationship,
+          userGoal: card.userGoal,
+          channel: card.channel,
+        });
+        if (!detectSituationLeak(newSituation).isLeak) break;
+      }
+      const updated = await storage.updateMotherCard(card.cardId, { situation: newSituation });
+      const result = detectSituationLeak(newSituation);
+      res.json({ card: updated, stillLeaks: result.isLeak, matches: result.matches });
+    } catch (error) {
+      console.error("Error fixing card leak:", error);
+      res.status(500).json({ error: "Failed to fix card leak" });
+    }
+  });
+
   app.get("/api/admin/settings", isAdminSession, async (req: any, res) => {
     try {
       const settings = await storage.getAllAdminSettings();

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { InsertMotherCard } from "@shared/schema";
 import type { IStorage } from "./storage";
+import { detectSituationLeak, rewriteSituationWithoutLeak } from "./leak-detection";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -427,7 +428,9 @@ ${difficulties.map((d, i) => `Carte ${i + 1}: difficulty="${d}", channel="${chan
 REGLES IMPORTANTES:
 - Chaque situation doit etre UNIQUE, REALISTE et CONCRETE (2 a 3 phrases courtes)
 - CONCRET ET AUTO-SUFFISANT (regle n1) : nomme TOUJOURS les details specifiques dont l'utilisateur a besoin pour repondre. INTERDIT de rester vague avec "un projet", "un truc", "quelque chose", "une remarque", "une nouvelle" sans le preciser. Donne le detail exact : QUEL projet (ex: "l'appli de suivi de courses qu'il a codee ce week-end"), QUELLE phrase exacte a ete dite, QUEL objet, QUEL evenement. L'utilisateur doit savoir precisement a quoi il reagit et avoir de la matiere concrete pour formuler sa reponse.
-- NE PRE-ECRIS JAMAIS LA REPONSE DE L'UTILISATEUR (regle n2) : la situation pose UNIQUEMENT le decor et ce que l'interlocuteur dit ou fait, puis s'arrete PILE au moment ou c'est a l'utilisateur de parler. Elle ne doit JAMAIS contenir ni suggerer la replique de l'utilisateur. INTERDIT d'ecrire "Tu lui dis : '...'", "Tu envoies un message pour lui dire : '...'", "Tu reponds que...", "Tu remarques : '...'". C'est a l'utilisateur de formuler sa reponse lui-meme.
+- NE PRE-ECRIS JAMAIS LA REPONSE DE L'UTILISATEUR (regle n2) : la situation pose UNIQUEMENT le decor et ce que l'interlocuteur dit ou fait, puis s'arrete PILE au moment ou c'est a l'utilisateur de parler. Elle ne doit JAMAIS contenir ni suggerer la replique de l'utilisateur.
+  INTERDIT ABSOLU : toute phrase qui met des mots dans la bouche de l'utilisateur. Pour decrire ce que fait l'utilisateur, n'emploie JAMAIS les tournures "tu dis", "tu ecris", "tu envoies (un message/email pour dire)", "tu reponds (que)", "tu expliques", "tu proposes", "tu demandes", "tu annonces", "tu racontes", "tu precises", "tu declares", "tu suggeres", "tu remercies", ni les imperatifs "dis-lui/reponds-lui/ecris-lui que...", ni "tu dois/tu vas lui dire/repondre/annoncer que...".
+  La situation se TERMINE sur ce que dit ou fait l'interlocuteur (ses paroles a LUI entre guillemets), ou au plus par une amorce neutre type "C'est a toi de repondre." / "A toi de reagir." JAMAIS sur la replique de l'utilisateur.
   Exemple INTERDIT : "Ton ami a fait une super presentation sur le climat. Tu lui dis : 'Bravo, c'etait hyper clair !'"
   Exemple CORRECT : "Ton ami vient de terminer sa presentation sur le climat, visiblement fier de lui. Plusieurs collegues hochent la tete. C'est a toi de reagir."
 - Si l'interlocuteur dit ou fait quelque chose, ECRIS-LE explicitement et cite SES paroles a LUI entre guillemets (ex: "Ton manager lache en reunion : 'On dirait que tu n'as pas vraiment bosse le sujet.'"). L'utilisateur reagit a du concret, jamais a un resume abstrait.
@@ -496,7 +499,7 @@ async function generateBatch(
         continue;
       }
 
-      return cards.map((card: any, i: number) => {
+      const built: Partial<InsertMotherCard>[] = cards.map((card: any, i: number) => {
         const globalIdx = startIndex + i;
         return {
           intent: card.intent || subtheme.intents[globalIdx % subtheme.intents.length],
@@ -516,6 +519,34 @@ async function generateBatch(
           variantRulesBold: card.variantRulesBold || [],
         };
       });
+
+      // Enforce règle n2: a generated "situation" must never script the user's
+      // reply. Auto-rewrite any leak before the cards leave the generator, so
+      // preview / bulk-save / direct-save paths can never persist a leak.
+      await Promise.all(
+        built.map(async (c) => {
+          if (!c.situation || !detectSituationLeak(c.situation).isLeak) return;
+          try {
+            let s = c.situation;
+            for (let r = 0; r < 2 && detectSituationLeak(s).isLeak; r++) {
+              s = await rewriteSituationWithoutLeak({
+                situation: s,
+                otherRole: c.otherRole,
+                speakerRole: c.speakerRole,
+                relationship: c.relationship,
+                userGoal: c.userGoal,
+              });
+            }
+            c.situation = s;
+          } catch (e: any) {
+            console.warn(
+              `[SeedCards] leak sanitize failed for ${theme.id}/${subtheme.id}: ${e?.message || e}`,
+            );
+          }
+        }),
+      );
+
+      return built;
     } catch (error) {
       console.error(`[SeedCards] Error generating batch ${batchIndex} for ${theme.id}/${subtheme.id}, attempt ${attempt + 1}:`, error);
       if (attempt === maxRetries - 1) {
