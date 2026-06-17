@@ -523,12 +523,14 @@ async function generateBatch(
       // Enforce règle n2: a generated "situation" must never script the user's
       // reply. Auto-rewrite any leak before the cards leave the generator, so
       // preview / bulk-save / direct-save paths can never persist a leak.
-      await Promise.all(
-        built.map(async (c) => {
-          if (!c.situation || !detectSituationLeak(c.situation).isLeak) return;
+      // This is FAIL-CLOSED: a card that still leaks after rewrites (or whose
+      // rewrite errors out) is dropped, never returned for persistence.
+      const sanitized = await Promise.all(
+        built.map(async (c): Promise<Partial<InsertMotherCard> | null> => {
+          if (!c.situation || !detectSituationLeak(c.situation).isLeak) return c;
           try {
             let s = c.situation;
-            for (let r = 0; r < 2 && detectSituationLeak(s).isLeak; r++) {
+            for (let r = 0; r < 3 && detectSituationLeak(s).isLeak; r++) {
               s = await rewriteSituationWithoutLeak({
                 situation: s,
                 otherRole: c.otherRole,
@@ -537,16 +539,24 @@ async function generateBatch(
                 userGoal: c.userGoal,
               });
             }
+            if (detectSituationLeak(s).isLeak) {
+              console.warn(
+                `[SeedCards] dropping card that still leaks after rewrites (${theme.id}/${subtheme.id})`,
+              );
+              return null;
+            }
             c.situation = s;
+            return c;
           } catch (e: any) {
             console.warn(
-              `[SeedCards] leak sanitize failed for ${theme.id}/${subtheme.id}: ${e?.message || e}`,
+              `[SeedCards] leak sanitize failed, dropping card for ${theme.id}/${subtheme.id}: ${e?.message || e}`,
             );
+            return null;
           }
         }),
       );
 
-      return built;
+      return sanitized.filter((c): c is Partial<InsertMotherCard> => c !== null);
     } catch (error) {
       console.error(`[SeedCards] Error generating batch ${batchIndex} for ${theme.id}/${subtheme.id}, attempt ${attempt + 1}:`, error);
       if (attempt === maxRetries - 1) {
