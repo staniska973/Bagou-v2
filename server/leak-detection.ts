@@ -80,7 +80,34 @@ const RE_MODAL = new RegExp(
   "gi",
 );
 
-const RULES = [RE_USER_CONTENT, RE_2P_COLON, RE_IMPERATIVE, RE_MODAL];
+// Paraphrased reply leak: a high-risk communicative 2nd-person verb whose
+// DIRECT OBJECT is the communicated content itself, with NO quote/colon/"que"
+// marker — e.g. "tu annonces ton départ", "tu proposes une remise de 10%",
+// "tu expliques ton retard au client". These reveal what the user will say.
+// An optional recipient ("à l'équipe", "au client") may sit between the verb
+// and its object. Notes that keep this precise:
+//  - Medium verbs (écrire/envoyer) are excluded, so "tu écris à un client" and
+//    "tu envoies un message à Paul" (channel only, no content) stay allowed.
+//  - Only the PRESENT 2nd-person form fires. Stating intent with an infinitive
+//    ("tu veux proposer une remise") is allowed scene-setting, not a leak.
+//  - NOT_RELATIVE still skips "l'approche que tu proposes".
+const HIGH_RISK_CONTENT = [
+  "annonces", "expliques", "proposes", "demandes", "racontes", "déclares",
+  "declares", "suggères", "suggeres", "réclames", "reclames", "précises",
+  "precises", "objectes", "affirmes", "avoues", "confies", "promets",
+  "exiges", "ordonnes",
+];
+// Determiner that opens a content noun-phrase object (possessive / article /
+// demonstrative). A recipient is introduced by "à/au/aux" instead.
+const CONTENT_OBJ_DET =
+  "(?:ton|ta|tes|mon|ma|mes|son|sa|ses|notre|nos|votre|vos|leur|leurs|le|la|les|l['\u2019]|un|une|des|ce|cet|cette|ces)";
+const OPT_RECIPIENT = "(?:(?:\u00e0|au|aux)\\s+(?:[A-Za-z\u00c0-\u00ff'\u2019-]+\\s+){1,4})?";
+const RE_PARAPHRASE = new RegExp(
+  `${NOT_RELATIVE}\\btu\\s+${CLITICS}(?:${HIGH_RISK_CONTENT.join("|")})\\b\\s+${OPT_RECIPIENT}${CONTENT_OBJ_DET}\\s+[A-Za-z\u00c0-\u00ff]`,
+  "gi",
+);
+
+const RULES = [RE_USER_CONTENT, RE_2P_COLON, RE_IMPERATIVE, RE_MODAL, RE_PARAPHRASE];
 
 // Speech verbs that attribute a quote to the INTERLOCUTOR ("il dit", "elle te
 // répond", "Marc lança : …", "… en disant, '…'"). Covers 3rd-person present,
@@ -201,8 +228,9 @@ RÈGLES :
 - Garde le décor concret. Tu peux dire que l'utilisateur va écrire/appeler/parler (le canal), mais JAMAIS le contenu de ce qu'il va dire.
 - SUPPRIME toute réplique de l'utilisateur, qu'elle soit :
   • dictée ("tu dis", "tu écris", "tu réponds que", "dis-lui que", "tu lui expliques que", "tu proposes : '...'"),
-  • résumée/paraphrasée ("tu annonces que le client se retire", "tu expliques que tu as cassé la tasse"),
+  • résumée/paraphrasée, AVEC ou SANS "que" ("tu annonces que le client se retire", "tu annonces ton départ", "tu expliques ton retard au client", "tu proposes une remise de 10%", "tu demandes une augmentation"),
   • OU déplacée dans une citation isolée (une phrase entre guillemets qui n'est PAS attribuée à l'interlocuteur). NE LAISSE JAMAIS une citation pendante des mots de l'utilisateur.
+- ACTE DE PAROLE AU PRÉSENT : si l'utilisateur est décrit en train de parler au présent ("tu racontes ton anecdote", "tu proposes une offre", "tu expliques ton choix", "tu demandes une augmentation"), NE garde PAS ce présent. Reformule en INTENTION avec un infinitif ("tu veux raconter ton anecdote", "tu comptes proposer une offre", "tu t'apprêtes à expliquer ton choix", "tu veux demander une augmentation") OU pose le sujet comme décor. Tu peux GARDER le thème/sujet, mais jamais l'acte de parole conjugué au présent ("tu racontes/proposes/expliques/annonces/demandes…").
 - La SEULE parole autorisée entre guillemets est celle de l'INTERLOCUTEUR, et elle doit être attribuée juste avant ("Il te répond : '…'", "Marc lance : '…'").
 - La situation se termine sur ce que dit/fait l'interlocuteur, ou par une amorce neutre ("C'est à toi de répondre.", "À toi de réagir.") si c'est naturel. Ne termine JAMAIS sur une citation des mots de l'utilisateur.
 - 2 à 3 phrases courtes, concrètes, en français. Reste fidèle au décor, aux rôles et à l'enjeu d'origine.
@@ -212,6 +240,8 @@ EXEMPLES :
 - MAUVAIS : "Tu écris à ton voisin. 'Je suis désolé pour le bruit du chien hier soir.'" → BON : "Le chien a aboyé tard hier soir et a dérangé ton voisin. Tu veux lui écrire pour t'excuser. C'est à toi de lui écrire."
 - MAUVAIS : "Tu te tournes vers Alice et lui dis : 'J'ai adoré ton approche.'" → BON : "Le projet de groupe vient de se terminer et l'approche de ta collègue Alice t'a impressionné. Tu te tournes vers elle pour lui faire un retour. À toi de parler."
 - MAUVAIS : "Tu proposes une nouvelle répartition. 'Je pense que je pourrais prendre le design.' C'est à toi de répondre." → BON : "En réunion d'équipe, tu veux proposer une nouvelle répartition des tâches du projet. C'est à toi de prendre la parole."
+- MAUVAIS (paraphrase sans guillemets) : "Tu annonces ton départ à l'équipe. Tout le monde se tait." → BON : "Tu as décidé de quitter l'entreprise et tu réunis ton équipe pour le leur apprendre. Tout le monde se tait. C'est à toi de parler."
+- MAUVAIS (paraphrase sans guillemets) : "Tu proposes une remise de 10% au client mécontent." → BON : "Un client mécontent conteste sa facture et attend un geste de ta part. C'est à toi de répondre."
 - BON (à GARDER tel quel) : "Tu écris à un client qui conteste le contrat. Il te répond : 'Je ne suis pas d'accord avec ces conditions.'" (la citation est celle de l'interlocuteur).
 - CAS "mauvaise nouvelle déjà annoncée" : quand le vrai tour de l'utilisateur est de GÉRER LA RÉACTION ou de RÉPONDRE À UNE QUESTION de l'interlocuteur, transforme l'annonce/la décision de l'utilisateur en simple CONTEXTE (fait posé, passé), jamais en "tu annonces que …" ni "tu dois annoncer que …" ni "tu dois lui dire que …". MAUVAIS : "Tu annonces à Sophie que son projet a été refusé. Elle te regarde, surprise. C'est à toi de répondre." → BON : "Tu viens d'apprendre à ta collègue Sophie que son projet a été refusé. Elle te regarde, surprise. C'est à toi de répondre." MAUVAIS : "Tu dois annoncer à tes parents que tu arrêtes tes études. Ta mère te demande ce qui t'amène à cette décision." → BON : "Tu as décidé d'arrêter tes études et tu en parles à tes parents en personne. Ta mère, inquiète, te demande ce qui t'amène à cette décision. C'est à toi de répondre."
 
