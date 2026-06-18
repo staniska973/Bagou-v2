@@ -533,6 +533,39 @@ export default function Parcours() {
             </Card>
           )}
 
+          {oralRef.current.length > 0 && (
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1 mb-3">
+                  <Mic className="w-3 h-3" /> Tes conversations à l'oral
+                </p>
+                <ul className="space-y-3">
+                  {oralRef.current.map((o, i) => {
+                    const userSaid = lastUserUtterance(o.transcript);
+                    const takeaway = o.gd?.feedback || o.gd?.pattern || "";
+                    return (
+                      <li key={i} className="space-y-1.5" data-testid={`item-parcours-oral-${i}`}>
+                        <p className="text-sm font-semibold leading-snug" data-testid={`text-parcours-oral-situation-${i}`}>
+                          {o.card.situation}
+                        </p>
+                        {userSaid && (
+                          <p className="text-sm leading-relaxed text-muted-foreground" data-testid={`text-parcours-oral-said-${i}`}>
+                            <span className="font-semibold text-foreground/70">Toi&nbsp;:</span> «&nbsp;{userSaid}&nbsp;»
+                          </p>
+                        )}
+                        {takeaway && (
+                          <p className="text-sm leading-relaxed" data-testid={`text-parcours-oral-takeaway-${i}`}>
+                            <span className="font-semibold text-accent">Bagou&nbsp;:</span> {takeaway}
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
           <Button onClick={finish} className="w-full h-12 rounded-xl text-base mt-2" data-testid="button-parcours-finish">
             Retour à l'accueil
           </Button>
@@ -540,6 +573,15 @@ export default function Parcours() {
       </div>
     </div>
   );
+}
+
+function lastUserUtterance(transcript: string): string {
+  const userLines = transcript
+    .split("\n")
+    .filter((l) => l.startsWith("Toi : "))
+    .map((l) => l.slice("Toi : ".length).trim())
+    .filter(Boolean);
+  return userLines.length > 0 ? userLines[userLines.length - 1] : "";
 }
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
