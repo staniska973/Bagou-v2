@@ -12,6 +12,7 @@ import {
   Lightbulb,
   Loader2,
   Trophy,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -106,6 +107,7 @@ export default function Parcours() {
   const oralRef = useRef<OralResult[]>([]);
 
   const [finalDebrief, setFinalDebrief] = useState<FinalDebrief | null>(null);
+  const [expandedOral, setExpandedOral] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!profileId || sessionIdRef.current) return;
@@ -543,6 +545,8 @@ export default function Parcours() {
                   {oralRef.current.map((o, i) => {
                     const userSaid = lastUserUtterance(o.transcript);
                     const takeaway = o.gd?.feedback || o.gd?.pattern || "";
+                    const turns = parseTranscript(o.transcript, o.card.otherRole);
+                    const isExpanded = expandedOral.has(i);
                     return (
                       <li key={i} className="space-y-1.5" data-testid={`item-parcours-oral-${i}`}>
                         <p className="text-sm font-semibold leading-snug" data-testid={`text-parcours-oral-situation-${i}`}>
@@ -557,6 +561,61 @@ export default function Parcours() {
                           <p className="text-sm leading-relaxed" data-testid={`text-parcours-oral-takeaway-${i}`}>
                             <span className="font-semibold text-accent">Bagou&nbsp;:</span> {takeaway}
                           </p>
+                        )}
+                        {turns.length > 0 && (
+                          <div className="pt-0.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedOral((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(i)) next.delete(i);
+                                  else next.add(i);
+                                  return next;
+                                })
+                              }
+                              className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                              data-testid={`button-parcours-oral-toggle-${i}`}
+                              aria-expanded={isExpanded}
+                            >
+                              <ChevronDown
+                                className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                              />
+                              {isExpanded ? "Masquer la conversation" : "Voir la conversation"}
+                            </button>
+                            {isExpanded && (
+                              <div
+                                className="mt-2 space-y-2 rounded-xl bg-muted/40 p-3"
+                                data-testid={`list-parcours-oral-transcript-${i}`}
+                              >
+                                {turns.map((t, ti) => (
+                                  <div
+                                    key={ti}
+                                    className={`flex ${t.role === "user" ? "justify-end" : "justify-start"}`}
+                                  >
+                                    <div
+                                      className={`max-w-[82%] rounded-2xl px-3.5 py-2 ${
+                                        t.role === "user"
+                                          ? "bg-primary/10 rounded-br-sm"
+                                          : "bg-background rounded-bl-sm"
+                                      }`}
+                                    >
+                                      <p
+                                        className={`text-[10px] font-semibold uppercase tracking-wide mb-0.5 ${
+                                          t.role === "user" ? "text-primary/70" : "text-muted-foreground"
+                                        }`}
+                                      >
+                                        {t.role === "user" ? "Toi" : o.card.otherRole}
+                                      </p>
+                                      <p className="text-[14px] leading-snug text-left text-foreground/90">
+                                        {t.content}
+                                      </p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </li>
                     );
@@ -573,6 +632,31 @@ export default function Parcours() {
       </div>
     </div>
   );
+}
+
+function parseTranscript(
+  transcript: string,
+  otherRole: string,
+): { role: "user" | "other"; content: string }[] {
+  const otherPrefix = `${otherRole} : `;
+  return transcript
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      if (l.startsWith("Toi : ")) {
+        return { role: "user" as const, content: l.slice("Toi : ".length).trim() };
+      }
+      if (l.startsWith(otherPrefix)) {
+        return { role: "other" as const, content: l.slice(otherPrefix.length).trim() };
+      }
+      const idx = l.indexOf(" : ");
+      if (idx !== -1) {
+        return { role: "other" as const, content: l.slice(idx + 3).trim() };
+      }
+      return { role: "other" as const, content: l };
+    })
+    .filter((t) => t.content.length > 0);
 }
 
 function lastUserUtterance(transcript: string): string {
