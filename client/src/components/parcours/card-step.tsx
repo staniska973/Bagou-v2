@@ -375,7 +375,7 @@ export function CardStep({
                       onClick={() => rate(key)}
                       disabled={isRating}
                       whileTap={{ scale: 0.94 }}
-                      className={`flex flex-col items-center justify-center h-auto py-2.5 gap-1 rounded-xl border font-medium transition-colors ${
+                      className={`flex flex-col items-center justify-center h-auto py-2.5 gap-1 rounded-xl border font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 ${
                         isSel
                           ? fill
                           : `bg-card hover-elevate active-elevate-2 ${base}`
