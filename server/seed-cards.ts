@@ -8,7 +8,7 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-const MODEL = "gpt-4o-mini";
+const MODEL = "gpt-5-mini";
 
 export interface SubthemeConfig {
   id: string;
@@ -487,7 +487,6 @@ async function generateBatch(
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 4000,
-        temperature: 0.9,
       });
 
       const content = response.choices[0]?.message?.content || "{}";

@@ -1,0 +1,17 @@
+---
+name: GPT-5 API constraints (chat.completions)
+description: Non-obvious request-param differences when using gpt-5* models via the OpenAI-compatible Replit AI integration.
+---
+
+GPT-5 family models (gpt-5, gpt-5-mini, gpt-5-nano) reject a custom `temperature`
+on `chat.completions.create`. Only the default (`1`) is accepted; any other value
+returns HTTP 400: "Unsupported value: 'temperature' does not support X with this
+model. Only the default (1) value is supported."
+
+**Why:** Swapping the chat model from `gpt-4o-mini` to `gpt-5-mini` broke every
+OpenAI call that passed `temperature: 0.x`. Removing the `temperature` param fixed it.
+
+**How to apply:** When moving an OpenAI chat call to a gpt-5* model, drop any
+`temperature` param (or only send it for non-gpt-5 models). `max_completion_tokens`
+is already the correct token param (gpt-5 rejects `max_tokens`). Gemini calls keep
+their own temperature — this constraint is OpenAI gpt-5 only.

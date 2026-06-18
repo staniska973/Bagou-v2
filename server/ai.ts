@@ -15,11 +15,10 @@ const gemini = new GoogleGenAI({
   },
 });
 
-const GPT_MODEL = "gpt-4o-mini";
+const GPT_MODEL = "gpt-5-mini";
 const GEMINI_MODEL = "gemini-2.5-flash";
 const SCORING_PROVIDER = (process.env.SCORING_MODEL || "gemini") as "gpt" | "gemini";
 const GENERATION_PROVIDER = (process.env.GENERATION_MODEL || "gpt") as "gpt" | "gemini";
-const TEMPERATURE = 0.85;
 
 const BASE_BAGOU_SYSTEM = `Tu es le coach Bagou. Philosophie :
 - RÉFLEXE, pas monologue. Chaque réponse = 1 à 2 phrases MAX. Percutante. Tranchante.
@@ -132,7 +131,6 @@ JSON:
     ],
     response_format: { type: "json_object" },
     max_completion_tokens: 300,
-    temperature: TEMPERATURE,
   });
 
   const elapsed = Date.now() - start;
@@ -218,7 +216,6 @@ JSON:
       ],
       response_format: { type: "json_object" },
       max_completion_tokens: 250,
-      temperature: 0.7,
     });
     content = response.choices[0]?.message?.content || "{}";
   }
@@ -289,7 +286,6 @@ RÈGLES DU PERSONNAGE :
     messages,
     response_format: { type: "json_object" },
     max_completion_tokens: 250,
-    temperature: TEMPERATURE,
   });
 
   const elapsed = Date.now() - start;
@@ -342,7 +338,6 @@ JSON:
     ],
     response_format: { type: "json_object" },
     max_completion_tokens: 400,
-    temperature: 0.8,
   });
 
   const elapsed = Date.now() - start;
@@ -419,7 +414,6 @@ RÈGLE ABSOLUE : tu n'es QUE l'interlocuteur "${card.otherRole}". Tu ne souffles
       },
       { role: "user", content: prompt },
     ],
-    temperature: 0.92,
     max_completion_tokens: 80,
   });
 
@@ -495,7 +489,6 @@ Réponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
     messages,
     response_format: { type: "json_object" },
     max_completion_tokens: isFinalTurn ? 600 : 350,
-    temperature: TEMPERATURE,
   });
 
   const elapsed = Date.now() - start;
