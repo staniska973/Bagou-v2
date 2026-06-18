@@ -33,6 +33,7 @@ interface WrittenResult {
   rating: Rating;
   oneFix: string;
   userAnswer: string;
+  modelAnswer: string;
 }
 
 interface OralResult {
@@ -108,6 +109,7 @@ export default function Parcours() {
 
   const [finalDebrief, setFinalDebrief] = useState<FinalDebrief | null>(null);
   const [expandedOral, setExpandedOral] = useState<Set<number>>(new Set());
+  const [expandedWritten, setExpandedWritten] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!profileId || sessionIdRef.current) return;
@@ -171,10 +173,10 @@ export default function Parcours() {
   }, [profileId]);
 
   const onCardRated = useCallback(
-    (rating: Rating, oneFix: string, userAnswer: string) => {
+    (rating: Rating, oneFix: string, userAnswer: string, modelAnswer: string) => {
       const card = queue[ecritIndex];
       if (!card) return;
-      writtenRef.current = [...writtenRef.current, { card, rating, oneFix, userAnswer }];
+      writtenRef.current = [...writtenRef.current, { card, rating, oneFix, userAnswer, modelAnswer }];
       const next = ecritIndex + 1;
       if (next < queue.length) {
         setEcritIndex(next);
@@ -388,7 +390,6 @@ export default function Parcours() {
   // DÉBRIEF COMPLET
   const validated = writtenRef.current.filter((w) => w.rating !== "hard").length;
   const toWork = writtenRef.current.length - validated;
-  const fixes = Array.from(new Set(writtenRef.current.map((w) => w.oneFix).filter(Boolean)));
 
   const oralPlayed = oralRef.current.length;
   const oralMastered = oralRef.current.filter((o) => o.gd && o.gd.rating !== "hard").length;
@@ -522,14 +523,73 @@ export default function Parcours() {
             </Card>
           )}
 
-          {fixes.length > 0 && (
+          {writtenRef.current.length > 0 && (
             <Card>
               <CardContent className="p-4">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">À corriger à l'écrit</p>
-                <ul className="space-y-1.5">
-                  {fixes.map((f, i) => (
-                    <li key={i} className="text-sm leading-relaxed text-muted-foreground" data-testid={`text-parcours-fix-${i}`}>• {f}</li>
-                  ))}
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1 mb-3">
+                  <PenLine className="w-3 h-3" /> Tes réponses à l'écrit
+                </p>
+                <ul className="space-y-3">
+                  {writtenRef.current.map((w, i) => {
+                    const isExpanded = expandedWritten.has(i);
+                    const hasDetail = !!(w.userAnswer?.trim() || w.modelAnswer?.trim());
+                    return (
+                      <li key={i} className="space-y-1.5" data-testid={`item-parcours-written-${i}`}>
+                        <p className="text-sm font-semibold leading-snug" data-testid={`text-parcours-written-situation-${i}`}>
+                          {w.card.situation}
+                        </p>
+                        {w.oneFix && (
+                          <p className="text-sm leading-relaxed text-muted-foreground" data-testid={`text-parcours-fix-${i}`}>
+                            <span className="font-semibold text-foreground/70">À corriger&nbsp;:</span> {w.oneFix}
+                          </p>
+                        )}
+                        {hasDetail && (
+                          <div className="pt-0.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedWritten((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(i)) next.delete(i);
+                                  else next.add(i);
+                                  return next;
+                                })
+                              }
+                              className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                              data-testid={`button-parcours-written-toggle-${i}`}
+                              aria-expanded={isExpanded}
+                            >
+                              <ChevronDown
+                                className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                              />
+                              {isExpanded ? "Masquer ma réponse" : "Voir ma réponse"}
+                            </button>
+                            {isExpanded && (
+                              <div
+                                className="mt-2 space-y-2.5 rounded-xl bg-muted/40 p-3"
+                                data-testid={`detail-parcours-written-${i}`}
+                              >
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-primary/70 mb-0.5">Toi</p>
+                                  <p className="text-[14px] leading-snug text-foreground/90" data-testid={`text-parcours-written-user-${i}`}>
+                                    {w.userAnswer?.trim() || "(réponse vue directement)"}
+                                  </p>
+                                </div>
+                                {w.modelAnswer?.trim() && (
+                                  <div>
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-accent mb-0.5">La réponse Bagou</p>
+                                    <p className="text-[14px] leading-snug text-foreground/90" data-testid={`text-parcours-written-model-${i}`}>
+                                      {w.modelAnswer}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </CardContent>
             </Card>

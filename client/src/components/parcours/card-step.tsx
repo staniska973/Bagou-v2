@@ -88,7 +88,7 @@ export function CardStep({
   card: ParcoursCard;
   profileId: number;
   sessionId: number | null;
-  onRated: (rating: Rating, oneFix: string, userAnswer: string) => void;
+  onRated: (rating: Rating, oneFix: string, userAnswer: string, modelAnswer: string) => void;
 }) {
   const [phase, setPhase] = useState<Phase>("formulate");
   const [userAnswer, setUserAnswer] = useState("");
@@ -145,7 +145,7 @@ export function CardStep({
         // Keep the confirmation visible long enough to feel satisfying.
         new Promise((r) => setTimeout(r, 420)),
       ]);
-      onRated(rating, result?.feedback?.oneFix || "", userAnswer);
+      onRated(rating, result?.feedback?.oneFix || "", userAnswer, result?.modelAnswer || "");
     } catch {
       setSelected(null);
       setIsRating(false);
