@@ -48,3 +48,7 @@ SCORING_MODEL = "gemini"
 GENERATION_MODEL = "gpt"
 ADMIN_USERNAME = "bagou_admin"
 ADMIN_PASSWORD = "Bagou2024!"
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 180000
