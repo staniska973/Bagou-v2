@@ -306,14 +306,18 @@ RÈGLES DU PERSONNAGE :
 
 export async function generateDebrief(
   profile: UserProfile,
-  transcript: { role: string; content: string }[]
+  transcript: string | { role: string; content: string }[]
 ): Promise<DebriefResponse> {
+  const transcriptText = Array.isArray(transcript)
+    ? transcript.map((m) => `${m.role === "user" ? "UTILISATEUR" : "IA"}: ${m.content}`).join("\n")
+    : transcript;
+
   const prompt = `Débriefe ce roleplay. Style Bagou : direct, percutant, pas de blabla.
 
 Profil : ton=${profile.tonePrimary}, risque=${profile.riskLevel}
 
 Transcription :
-${transcript.map((m) => `${m.role === "user" ? "UTILISATEUR" : "IA"}: ${m.content}`).join("\n")}
+${transcriptText}
 
 RÈGLES :
 - strengths : 2 points forts en UNE phrase chacun, style punchline ("Tu as tenu ton cadre sans ciller")
