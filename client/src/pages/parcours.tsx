@@ -388,6 +388,9 @@ export default function Parcours() {
   const toWork = writtenRef.current.length - validated;
   const fixes = Array.from(new Set(writtenRef.current.map((w) => w.oneFix).filter(Boolean)));
 
+  const oralPlayed = oralRef.current.length;
+  const oralMastered = oralRef.current.filter((o) => o.gd && o.gd.rating !== "hard").length;
+
   return (
     <div className="h-dvh flex flex-col bg-gradient-to-br from-background via-background to-primary/5">
       <div className="flex-shrink-0 px-4 pt-4 flex items-center gap-3">
@@ -422,6 +425,29 @@ export default function Parcours() {
               </CardContent>
             </Card>
           </div>
+
+          {oralPlayed > 0 && (
+            <Card className="border-accent/20 bg-accent/5">
+              <CardContent className="p-3 flex items-center gap-3">
+                <div className="flex items-center justify-center w-9 h-9 rounded-full bg-accent/15 shrink-0">
+                  <Mic className="w-4 h-4 text-accent" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold leading-tight">À l'oral</p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">
+                    {oralPlayed} conversation{oralPlayed > 1 ? "s" : ""} jouée{oralPlayed > 1 ? "s" : ""}
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-xl font-bold text-accent tabular-nums" data-testid="text-parcours-oral-mastered">
+                    <CountUp value={oralMastered} />
+                    <span className="text-sm font-medium text-muted-foreground">/{oralPlayed}</span>
+                  </p>
+                  <p className="text-[11px] text-muted-foreground leading-tight">maîtrisée{oralMastered > 1 ? "s" : ""}</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {finalDebrief ? (
             <>
