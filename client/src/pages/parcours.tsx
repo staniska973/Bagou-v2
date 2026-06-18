@@ -338,18 +338,23 @@ export default function Parcours() {
   // ORAL
   if (phase === "oral") {
     const card = oralQueue[oralIndex];
+    const oralResults: Rating[] = oralRef.current.map((o) => o.gd?.rating ?? "medium");
     return (
       <div className="h-dvh flex flex-col bg-gradient-to-b from-background via-background to-primary/10">
-        <div className="flex-shrink-0 px-4 pt-4 flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="-ml-2" onClick={finish} data-testid="button-parcours-oral-back">
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div className="flex items-center gap-1.5 text-xs font-medium text-accent">
-            <Mic className="w-3.5 h-3.5" /> Oral
+        <div className="flex-shrink-0 px-4 pt-4 pb-2">
+          <div className="max-w-lg mx-auto flex items-center gap-2.5">
+            <Button variant="ghost" size="icon" className="shrink-0 -ml-2" onClick={finish} data-testid="button-parcours-oral-back">
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+            <div className="flex items-center gap-1 text-xs font-medium text-accent shrink-0">
+              <Mic className="w-3.5 h-3.5" /> Oral
+            </div>
+            <SessionProgress total={oralQueue.length} results={oralResults} currentIndex={oralIndex} />
+            <span className="text-xs font-medium text-muted-foreground tabular-nums shrink-0" data-testid="text-parcours-oral-progress">
+              {Math.min(oralIndex + 1, oralQueue.length)}/{oralQueue.length}
+            </span>
+            <StreakBadge streak={profile?.streak || 0} />
           </div>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {oralIndex + 1}/{oralQueue.length}
-          </span>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-6 overflow-hidden">
           {card && (
@@ -357,6 +362,7 @@ export default function Parcours() {
               key={card.cardId}
               card={card}
               profileId={profileId}
+              isLast={oralIndex === oralQueue.length - 1}
               onComplete={onOralComplete}
             />
           )}

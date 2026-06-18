@@ -151,3 +151,18 @@ export function pickEncouragement(mastered: number, toReview: number): { title: 
     sub: tiers.subs[total % tiers.subs.length],
   };
 }
+
+// Per-conversation reward microcopy for the oral flow, in Bagou's direct coach tone.
+export function pickOralEncouragement(rating: Rating | null): { title: string; sub: string } {
+  if (rating === "easy") {
+    return { title: "Tu as tenu ton cadre.", sub: "C'est exactement ça, en live. Bravo." };
+  }
+  if (rating === "hard") {
+    return {
+      title: "Dur, mais tu l'as joué.",
+      sub: "Oser à voix haute, c'est déjà la moitié du chemin. On y revient.",
+    };
+  }
+  // medium or unknown — encourage, push one cran further.
+  return { title: "Bien envoyé.", sub: "Pas mal du tout. Encore un cran et c'est ancré." };
+}

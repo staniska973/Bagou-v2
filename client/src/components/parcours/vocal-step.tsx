@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Loader2, Target } from "lucide-react";
+import { Mic, Square, Loader2, Target, Sparkles, ArrowRight, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiRequest } from "@/lib/queryClient";
 import type { ParcoursCard } from "./card-step";
+import { CelebrationRings, pickOralEncouragement } from "./session-ui";
 
 export interface GlobalDynamic {
   feedback: string;
@@ -21,16 +22,19 @@ const NUM_BARS = 7;
 export function VocalStep({
   card,
   profileId,
+  isLast = false,
   onComplete,
 }: {
   card: ParcoursCard;
   profileId: number;
+  isLast?: boolean;
   onComplete: (gd: GlobalDynamic | null, transcript: string) => void;
 }) {
   const [phase, setPhase] = useState<Phase>("intro");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [micError, setMicError] = useState(false);
+  const [endGd, setEndGd] = useState<GlobalDynamic | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -160,17 +164,16 @@ export function VocalStep({
     }
   }, []);
 
-  const conclude = useCallback(
-    (gd: GlobalDynamic | null) => {
-      if (doneRef.current) return;
-      doneRef.current = true;
-      stopTimer();
-      cleanupAudio();
-      setPhase("ending");
-      onComplete(gd, buildTranscript());
-    },
-    [onComplete],
-  );
+  const conclude = useCallback((gd: GlobalDynamic | null) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    stopTimer();
+    cleanupAudio();
+    cleanupMeter();
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    setEndGd(gd);
+    setPhase("ending");
+  }, []);
 
   const submitUserMessage = useCallback(
     async (text: string) => {
@@ -365,6 +368,64 @@ export function VocalStep({
     );
   }
 
+  if (phase === "ending") {
+    const enc = pickOralEncouragement(endGd?.rating ?? null);
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md mx-auto text-center"
+        data-testid="section-vocal-ending"
+      >
+        <div className="relative w-20 h-20 mx-auto mb-5 flex items-center justify-center">
+          <CelebrationRings />
+          <div className="w-16 h-16 rounded-full bg-accent/15 flex items-center justify-center">
+            <Sparkles className="w-8 h-8 text-accent" />
+          </div>
+        </div>
+
+        <h2 className="text-2xl font-bold mb-1.5" data-testid="text-vocal-ending-title">
+          {enc.title}
+        </h2>
+        <p className="text-sm text-muted-foreground mb-5">{enc.sub}</p>
+
+        {endGd?.feedback && (
+          <Card className="border-accent/30 bg-accent/5 text-left mb-3">
+            <CardContent className="p-4">
+              <p className="text-[10px] font-semibold text-accent uppercase tracking-wide flex items-center gap-1 mb-1.5">
+                <Trophy className="w-3 h-3" /> Le mot de Bagou
+              </p>
+              <p className="text-sm leading-relaxed" data-testid="text-vocal-ending-feedback">
+                {endGd.feedback}
+              </p>
+              {endGd.pattern && (
+                <p className="text-xs text-muted-foreground mt-2" data-testid="text-vocal-ending-pattern">
+                  <span className="font-semibold text-foreground/70">Ton réflexe&nbsp;:</span> {endGd.pattern}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <Button
+          onClick={() => onComplete(endGd, buildTranscript())}
+          className="w-full h-14 rounded-2xl text-base gap-2 mt-1"
+          data-testid="button-vocal-continue"
+        >
+          {isLast ? (
+            <>
+              <Trophy className="w-5 h-5" /> Voir mon débrief
+            </>
+          ) : (
+            <>
+              Situation suivante <ArrowRight className="w-4 h-4" />
+            </>
+          )}
+        </Button>
+      </motion.div>
+    );
+  }
+
   return (
     <div className="w-full max-w-md mx-auto h-full flex flex-col py-2">
       {/* Objective — always visible so the user knows their goal */}
@@ -444,9 +505,7 @@ export function VocalStep({
                 ? `${card.otherRole} parle…`
                 : phase === "thinking"
                   ? `${card.otherRole} réfléchit…`
-                  : phase === "ending"
-                    ? "Conversation terminée"
-                    : ""}
+                  : ""}
             </p>
           )}
         </div>
@@ -468,7 +527,7 @@ export function VocalStep({
             </Button>
           ) : (
             <div className="w-16 h-16 rounded-full bg-muted/40 flex items-center justify-center">
-              {phase === "thinking" || phase === "ending" ? (
+              {phase === "thinking" ? (
                 <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
               ) : (
                 <Mic className="w-6 h-6 text-muted-foreground/50" />
