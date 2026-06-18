@@ -15,6 +15,8 @@ import {
   Sparkles,
   User,
   Quote,
+  Volume2,
+  Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -99,12 +101,63 @@ export function CardStep({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsPlaying, setTtsPlaying] = useState(false);
+
+  const stopTts = useCallback(() => {
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current = null;
+    }
+    setTtsPlaying(false);
+    setTtsLoading(false);
+  }, []);
+
+  const playTts = useCallback(
+    async (text: string) => {
+      if (ttsPlaying || ttsLoading) {
+        stopTts();
+        return;
+      }
+      stopTts();
+      setTtsLoading(true);
+      try {
+        const res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (!res.ok) throw new Error("tts");
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        ttsAudioRef.current = audio;
+        const cleanup = () => {
+          URL.revokeObjectURL(url);
+          if (ttsAudioRef.current === audio) ttsAudioRef.current = null;
+          setTtsPlaying(false);
+        };
+        audio.onended = cleanup;
+        audio.onerror = cleanup;
+        setTtsLoading(false);
+        setTtsPlaying(true);
+        await audio.play();
+      } catch {
+        setTtsLoading(false);
+        setTtsPlaying(false);
+      }
+    },
+    [ttsPlaying, ttsLoading, stopTts],
+  );
+
   useEffect(
     () => () => {
       if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
       streamRef.current?.getTracks().forEach((t) => t.stop());
+      stopTts();
     },
-    [],
+    [stopTts],
   );
 
   const submitAnswer = useCallback(
@@ -332,9 +385,30 @@ export function CardStep({
             >
               <Card className="border-accent/30 bg-accent/5">
                 <CardContent className="p-4">
-                  <p className="text-[10px] font-semibold text-accent uppercase tracking-wide flex items-center gap-1 mb-2">
-                    <Lightbulb className="w-3 h-3" /> La réponse Bagou
-                  </p>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-[10px] font-semibold text-accent uppercase tracking-wide flex items-center gap-1">
+                      <Lightbulb className="w-3 h-3" /> La réponse Bagou
+                    </p>
+                    {result.modelAnswer?.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => playTts(result.modelAnswer)}
+                        disabled={ttsLoading}
+                        className="flex items-center gap-1 rounded-full border border-accent/30 px-2 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10 disabled:opacity-60"
+                        data-testid="button-card-model-listen"
+                        aria-label={ttsPlaying ? "Arrêter la lecture" : "Écouter la réponse Bagou"}
+                      >
+                        {ttsLoading ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : ttsPlaying ? (
+                          <Square className="w-3 h-3 fill-current" />
+                        ) : (
+                          <Volume2 className="w-3 h-3" />
+                        )}
+                        {ttsPlaying ? "Arrêter" : "Écouter"}
+                      </button>
+                    )}
+                  </div>
                   <p className="text-base font-medium leading-relaxed" data-testid="text-card-model-answer">
                     {result.modelAnswer}
                   </p>
