@@ -13,6 +13,8 @@ import {
   Loader2,
   Trophy,
   ChevronDown,
+  Volume2,
+  Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -110,6 +112,58 @@ export default function Parcours() {
   const [finalDebrief, setFinalDebrief] = useState<FinalDebrief | null>(null);
   const [expandedOral, setExpandedOral] = useState<Set<number>>(new Set());
   const [expandedWritten, setExpandedWritten] = useState<Set<number>>(new Set());
+
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [ttsLoadingKey, setTtsLoadingKey] = useState<string | null>(null);
+  const [ttsPlayingKey, setTtsPlayingKey] = useState<string | null>(null);
+
+  const stopTts = useCallback(() => {
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current = null;
+    }
+    setTtsPlayingKey(null);
+    setTtsLoadingKey(null);
+  }, []);
+
+  useEffect(() => () => stopTts(), [stopTts]);
+
+  const playTts = useCallback(
+    async (key: string, text: string) => {
+      if (ttsPlayingKey === key || ttsLoadingKey === key) {
+        stopTts();
+        return;
+      }
+      stopTts();
+      setTtsLoadingKey(key);
+      try {
+        const res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (!res.ok) throw new Error("tts");
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        ttsAudioRef.current = audio;
+        const cleanup = () => {
+          URL.revokeObjectURL(url);
+          if (ttsAudioRef.current === audio) ttsAudioRef.current = null;
+          setTtsPlayingKey((k) => (k === key ? null : k));
+        };
+        audio.onended = cleanup;
+        audio.onerror = cleanup;
+        setTtsLoadingKey((k) => (k === key ? null : k));
+        setTtsPlayingKey(key);
+        await audio.play();
+      } catch {
+        setTtsLoadingKey((k) => (k === key ? null : k));
+        setTtsPlayingKey((k) => (k === key ? null : k));
+      }
+    },
+    [ttsPlayingKey, ttsLoadingKey, stopTts],
+  );
 
   useEffect(() => {
     if (!profileId || sessionIdRef.current) return;
@@ -577,7 +631,26 @@ export default function Parcours() {
                                 </div>
                                 {w.modelAnswer?.trim() && (
                                   <div>
-                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-accent mb-0.5">La réponse Bagou</p>
+                                    <div className="flex items-center justify-between gap-2 mb-0.5">
+                                      <p className="text-[10px] font-semibold uppercase tracking-wide text-accent">La réponse Bagou</p>
+                                      <button
+                                        type="button"
+                                        onClick={() => playTts(`written-${i}`, w.modelAnswer)}
+                                        disabled={ttsLoadingKey === `written-${i}`}
+                                        className="flex items-center gap-1 rounded-full border border-accent/30 px-2 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10 disabled:opacity-60"
+                                        data-testid={`button-parcours-written-listen-${i}`}
+                                        aria-label={ttsPlayingKey === `written-${i}` ? "Arrêter la lecture" : "Écouter la réponse Bagou"}
+                                      >
+                                        {ttsLoadingKey === `written-${i}` ? (
+                                          <Loader2 className="w-3 h-3 animate-spin" />
+                                        ) : ttsPlayingKey === `written-${i}` ? (
+                                          <Square className="w-3 h-3 fill-current" />
+                                        ) : (
+                                          <Volume2 className="w-3 h-3" />
+                                        )}
+                                        {ttsPlayingKey === `written-${i}` ? "Arrêter" : "Écouter"}
+                                      </button>
+                                    </div>
                                     <p className="text-[14px] leading-snug text-foreground/90" data-testid={`text-parcours-written-model-${i}`}>
                                       {w.modelAnswer}
                                     </p>
