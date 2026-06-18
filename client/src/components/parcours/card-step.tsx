@@ -102,53 +102,68 @@ export function CardStep({
   const streamRef = useRef<MediaStream | null>(null);
 
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
-  const [ttsLoading, setTtsLoading] = useState(false);
-  const [ttsPlaying, setTtsPlaying] = useState(false);
+  const ttsAbortRef = useRef<AbortController | null>(null);
+  const ttsRequestRef = useRef(0);
+  const [ttsLoadingId, setTtsLoadingId] = useState<string | null>(null);
+  const [ttsPlayingId, setTtsPlayingId] = useState<string | null>(null);
 
   const stopTts = useCallback(() => {
+    ttsRequestRef.current += 1;
+    if (ttsAbortRef.current) {
+      ttsAbortRef.current.abort();
+      ttsAbortRef.current = null;
+    }
     if (ttsAudioRef.current) {
       ttsAudioRef.current.pause();
       ttsAudioRef.current = null;
     }
-    setTtsPlaying(false);
-    setTtsLoading(false);
+    setTtsPlayingId(null);
+    setTtsLoadingId(null);
   }, []);
 
   const playTts = useCallback(
-    async (text: string) => {
-      if (ttsPlaying || ttsLoading) {
+    async (text: string, id: string) => {
+      if (ttsPlayingId === id || ttsLoadingId === id) {
         stopTts();
         return;
       }
       stopTts();
-      setTtsLoading(true);
+      const requestId = ttsRequestRef.current;
+      const controller = new AbortController();
+      ttsAbortRef.current = controller;
+      setTtsLoadingId(id);
       try {
         const res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text }),
+          signal: controller.signal,
         });
         if (!res.ok) throw new Error("tts");
         const blob = await res.blob();
+        if (requestId !== ttsRequestRef.current) return;
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
+        if (ttsAudioRef.current) ttsAudioRef.current.pause();
         ttsAudioRef.current = audio;
+        if (ttsAbortRef.current === controller) ttsAbortRef.current = null;
         const cleanup = () => {
           URL.revokeObjectURL(url);
           if (ttsAudioRef.current === audio) ttsAudioRef.current = null;
-          setTtsPlaying(false);
+          setTtsPlayingId((cur) => (cur === id ? null : cur));
         };
         audio.onended = cleanup;
         audio.onerror = cleanup;
-        setTtsLoading(false);
-        setTtsPlaying(true);
+        setTtsLoadingId(null);
+        setTtsPlayingId(id);
         await audio.play();
       } catch {
-        setTtsLoading(false);
-        setTtsPlaying(false);
+        if (requestId !== ttsRequestRef.current) return;
+        setTtsLoadingId(null);
+        setTtsPlayingId(null);
       }
     },
-    [ttsPlaying, ttsLoading, stopTts],
+    [ttsPlayingId, ttsLoadingId, stopTts],
   );
 
   useEffect(
@@ -392,20 +407,20 @@ export function CardStep({
                     {result.modelAnswer?.trim() && (
                       <button
                         type="button"
-                        onClick={() => playTts(result.modelAnswer)}
-                        disabled={ttsLoading}
+                        onClick={() => playTts(result.modelAnswer, "model")}
+                        disabled={ttsLoadingId === "model"}
                         className="flex items-center gap-1 rounded-full border border-accent/30 px-2 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10 disabled:opacity-60"
                         data-testid="button-card-model-listen"
-                        aria-label={ttsPlaying ? "Arrêter la lecture" : "Écouter la réponse Bagou"}
+                        aria-label={ttsPlayingId === "model" ? "Arrêter la lecture" : "Écouter la réponse Bagou"}
                       >
-                        {ttsLoading ? (
+                        {ttsLoadingId === "model" ? (
                           <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : ttsPlaying ? (
+                        ) : ttsPlayingId === "model" ? (
                           <Square className="w-3 h-3 fill-current" />
                         ) : (
                           <Volume2 className="w-3 h-3" />
                         )}
-                        {ttsPlaying ? "Arrêter" : "Écouter"}
+                        {ttsPlayingId === "model" ? "Arrêter" : "Écouter"}
                       </button>
                     )}
                   </div>
@@ -424,16 +439,37 @@ export function CardStep({
                   { label: "Audacieuse", text: result.variants.bold },
                 ]
                   .filter((v) => v.text)
-                  .map((v) => (
-                    <div
-                      key={v.label}
-                      className="text-sm border rounded-xl px-3 py-2 bg-card/50"
-                      data-testid={`text-card-variant-${v.label}`}
-                    >
-                      <span className="font-semibold text-muted-foreground text-xs">{v.label} · </span>
-                      {v.text}
-                    </div>
-                  ))}
+                  .map((v) => {
+                    const variantId = `variant-${v.label}`;
+                    return (
+                      <div
+                        key={v.label}
+                        className="text-sm border rounded-xl px-3 py-2 bg-card/50 flex items-start justify-between gap-2"
+                        data-testid={`text-card-variant-${v.label}`}
+                      >
+                        <p className="flex-1">
+                          <span className="font-semibold text-muted-foreground text-xs">{v.label} · </span>
+                          {v.text}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => playTts(v.text, variantId)}
+                          disabled={ttsLoadingId === variantId}
+                          className="mt-0.5 flex shrink-0 items-center justify-center rounded-full border border-border h-7 w-7 text-muted-foreground transition-colors hover:bg-accent/10 hover:text-accent disabled:opacity-60"
+                          data-testid={`button-card-variant-listen-${v.label}`}
+                          aria-label={ttsPlayingId === variantId ? `Arrêter la lecture (${v.label})` : `Écouter la variante ${v.label}`}
+                        >
+                          {ttsLoadingId === variantId ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : ttsPlayingId === variantId ? (
+                            <Square className="w-3.5 h-3.5 fill-current" />
+                          ) : (
+                            <Volume2 className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
               </div>
             )}
 
