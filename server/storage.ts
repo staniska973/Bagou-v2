@@ -20,7 +20,17 @@ import {
   type SessionEvent,
   type InsertSessionEvent,
 } from "@shared/schema";
-import { eq, and, lte, sql, desc, asc, gte, or } from "drizzle-orm";
+import { eq, and, lte, sql, desc, asc, gte, or, inArray } from "drizzle-orm";
+
+export interface DashboardAggregate {
+  today: { cards: number; sessions: number; debriefs: number };
+  totals: { sessions: number; cards: number; debriefs: number };
+  ratingDist: { hard: number; medium: number; easy: number };
+  avgScores: { clarity: number; frame: number; tone: number; concision: number } | null;
+  scoreHistory: { date: string; clarity: number; frame: number; tone: number; concision: number; overall: number }[];
+  recentStrengths: string[];
+  recentImprovements: string[];
+}
 
 export interface IStorage {
   getProfile(id: number): Promise<UserProfile | undefined>;
@@ -65,6 +75,8 @@ export interface IStorage {
 
   createSessionEvent(data: InsertSessionEvent): Promise<SessionEvent>;
   getSessionEvents(sessionId: number): Promise<SessionEvent[]>;
+
+  getDashboardAggregate(profileId: number): Promise<DashboardAggregate>;
 
   getStats(profileId: number): Promise<{
     dueCards: number;
@@ -388,6 +400,88 @@ class DatabaseStorage implements IStorage {
         themeId,
         ...data,
       })),
+    };
+  }
+
+  async getDashboardAggregate(profileId: number): Promise<DashboardAggregate> {
+    const today = new Date().toISOString().split("T")[0];
+    const dayOf = (d: Date) => new Date(d).toISOString().split("T")[0];
+
+    const sessions = await db
+      .select()
+      .from(trainingSessions)
+      .where(eq(trainingSessions.profileId, profileId));
+
+    const sessionIds = sessions.map((s) => s.id);
+    let events: SessionEvent[] = [];
+    if (sessionIds.length > 0) {
+      events = await db
+        .select()
+        .from(sessionEvents)
+        .where(inArray(sessionEvents.sessionId, sessionIds))
+        .orderBy(asc(sessionEvents.createdAt));
+    }
+
+    const flashcards = events.filter((e) => e.eventType === "flashcard_attempt");
+    const debriefs = events.filter((e) => e.eventType === "debrief");
+
+    const ratingDist = { hard: 0, medium: 0, easy: 0 };
+    for (const e of flashcards) {
+      if (e.rating === "hard") ratingDist.hard++;
+      else if (e.rating === "medium") ratingDist.medium++;
+      else if (e.rating === "easy") ratingDist.easy++;
+    }
+
+    const scoreHistory: DashboardAggregate["scoreHistory"] = [];
+    const sums = { clarity: 0, frame: 0, tone: 0, concision: 0 };
+    let scored = 0;
+    for (const e of debriefs) {
+      const s = e.scores as
+        | { clarity?: number; frame?: number; tone?: number; concision?: number }
+        | null;
+      if (s && (s.clarity != null || s.frame != null || s.tone != null || s.concision != null)) {
+        const clarity = Math.round(s.clarity ?? 0);
+        const frame = Math.round(s.frame ?? 0);
+        const tone = Math.round(s.tone ?? 0);
+        const concision = Math.round(s.concision ?? 0);
+        const overall = Math.round((clarity + frame + tone + concision) / 4);
+        scoreHistory.push({ date: dayOf(e.createdAt), clarity, frame, tone, concision, overall });
+        sums.clarity += clarity;
+        sums.frame += frame;
+        sums.tone += tone;
+        sums.concision += concision;
+        scored++;
+      }
+    }
+    const avgScores = scored > 0
+      ? {
+          clarity: Math.round(sums.clarity / scored),
+          frame: Math.round(sums.frame / scored),
+          tone: Math.round(sums.tone / scored),
+          concision: Math.round(sums.concision / scored),
+        }
+      : null;
+
+    const recentStrengths: string[] = [];
+    const recentImprovements: string[] = [];
+    for (let i = debriefs.length - 1; i >= 0; i--) {
+      const e = debriefs[i];
+      if (e.debriefStrengths) recentStrengths.push(...e.debriefStrengths);
+      if (e.debriefImprovement) recentImprovements.push(e.debriefImprovement);
+    }
+
+    return {
+      today: {
+        cards: flashcards.filter((e) => dayOf(e.createdAt) === today).length,
+        sessions: sessions.filter((s) => s.sessionDate === today).length,
+        debriefs: debriefs.filter((e) => dayOf(e.createdAt) === today).length,
+      },
+      totals: { sessions: sessions.length, cards: flashcards.length, debriefs: debriefs.length },
+      ratingDist,
+      avgScores,
+      scoreHistory,
+      recentStrengths: recentStrengths.slice(0, 12),
+      recentImprovements: recentImprovements.slice(0, 8),
     };
   }
 }

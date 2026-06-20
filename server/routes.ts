@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, updateAIRuntimeConfig, getAIRuntimeConfig } from "./ai";
+import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, generateDashboardAnalysis, updateAIRuntimeConfig, getAIRuntimeConfig, type DashboardAnalysis } from "./ai";
 import { speechToText, ensureCompatibleFormat, textToSpeech } from "./replit_integrations/audio/client";
 import { insertUserProfileSchema, insertSessionEventSchema } from "@shared/schema";
 import { z } from "zod";
@@ -20,6 +20,8 @@ function isAdminSession(req: any, res: any, next: any) {
 }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+const dashboardAnalysisCache = new Map<string, { sig: string; data: DashboardAnalysis }>();
 
 function calculateNextReview(
   currentInterval: number,
@@ -481,6 +483,86 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     } catch (error) {
       console.error("Error fetching stats:", error);
       res.status(500).json({ error: "Failed to fetch stats" });
+    }
+  });
+
+  app.get("/api/dashboard/:profileId", isAuthenticated, async (req: any, res) => {
+    try {
+      const profileId = parseInt(req.params.profileId);
+      const profile = await storage.getProfile(profileId);
+      if (!profile) {
+        return res.status(404).json({ error: "Profile not found" });
+      }
+      if (profile.userId !== req.user?.claims?.sub) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const [aggregate, stats] = await Promise.all([
+        storage.getDashboardAggregate(profileId),
+        storage.getStats(profileId),
+      ]);
+      res.json({
+        ...aggregate,
+        masteredCards: stats.masteredCards,
+        totalCards: stats.totalCards,
+        weakPoints: stats.weakPoints,
+      });
+    } catch (error) {
+      console.error("Error fetching dashboard:", error);
+      res.status(500).json({ error: "Failed to fetch dashboard" });
+    }
+  });
+
+  app.get("/api/dashboard/:profileId/analysis", isAuthenticated, async (req: any, res) => {
+    try {
+      const profileId = parseInt(req.params.profileId);
+      const profile = await storage.getProfile(profileId);
+      if (!profile) {
+        return res.status(404).json({ error: "Profile not found" });
+      }
+      if (profile.userId !== req.user?.claims?.sub) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const [aggregate, stats] = await Promise.all([
+        storage.getDashboardAggregate(profileId),
+        storage.getStats(profileId),
+      ]);
+
+      if (aggregate.totals.cards === 0 && aggregate.totals.debriefs === 0) {
+        return res.json({
+          bilan: "Pas encore assez de données. Lance quelques sessions et reviens : je te ferai un vrai bilan.",
+          pointsForts: [],
+          pointsFaibles: [],
+          axesAmelioration: [],
+          empty: true,
+        });
+      }
+
+      const today = new Date().toISOString().split("T")[0];
+      const ratingSum = aggregate.ratingDist.hard + aggregate.ratingDist.medium + aggregate.ratingDist.easy;
+      const sig = `${today}:${aggregate.totals.debriefs}:${aggregate.totals.cards}:${stats.masteredCards}:${ratingSum}`;
+      const cached = dashboardAnalysisCache.get(String(profileId));
+      if (cached && cached.sig === sig) {
+        return res.json({ ...cached.data, cached: true });
+      }
+
+      const analysis = await generateDashboardAnalysis(profile, {
+        totalSessions: aggregate.totals.sessions,
+        totalCards: aggregate.totals.cards,
+        masteredCards: stats.masteredCards,
+        ratingDist: aggregate.ratingDist,
+        avgScores: aggregate.avgScores,
+        recentStrengths: aggregate.recentStrengths,
+        recentImprovements: aggregate.recentImprovements,
+        weakTags: stats.weakPoints.map((w) => w.tag.replace(/_/g, " ")),
+        todayCards: aggregate.today.cards,
+        todaySessions: aggregate.today.sessions,
+      });
+      dashboardAnalysisCache.set(String(profileId), { sig, data: analysis });
+      res.json(analysis);
+    } catch (error) {
+      console.error("Error generating dashboard analysis:", error);
+      res.status(500).json({ error: "Failed to generate dashboard analysis" });
     }
   });
 

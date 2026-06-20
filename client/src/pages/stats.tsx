@@ -14,7 +14,19 @@ import {
   Calendar,
   CheckCircle2,
   AlertTriangle,
+  Sparkles,
+  ThumbsUp,
+  Lightbulb,
 } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -101,6 +113,27 @@ interface ProfileData {
   lastSessionDate: string | null;
 }
 
+interface DashboardData {
+  today: { cards: number; sessions: number; debriefs: number };
+  totals: { sessions: number; cards: number; debriefs: number };
+  ratingDist: { hard: number; medium: number; easy: number };
+  avgScores: { clarity: number; frame: number; tone: number; concision: number } | null;
+  scoreHistory: { date: string; clarity: number; frame: number; tone: number; concision: number; overall: number }[];
+  recentStrengths: string[];
+  recentImprovements: string[];
+  masteredCards: number;
+  totalCards: number;
+  weakPoints: { tag: string; count: number }[];
+}
+
+interface DashboardAnalysisData {
+  bilan: string;
+  pointsForts: string[];
+  pointsFaibles: string[];
+  axesAmelioration: string[];
+  empty?: boolean;
+}
+
 const ACHIEVEMENTS: AchievementDef[] = [
   {
     id: "first_session",
@@ -176,6 +209,49 @@ const itemVariants = {
   visible: { opacity: 1, y: 0 },
 };
 
+function InsightList({
+  icon: Icon,
+  title,
+  items,
+  accent,
+  dotClass,
+  testid,
+}: {
+  icon: React.ElementType;
+  title: string;
+  items: string[];
+  accent: string;
+  dotClass: string;
+  testid: string;
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Icon className={`w-4 h-4 ${accent}`} />
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {items.length > 0 ? (
+          <ul className="space-y-2.5">
+            {items.map((it, i) => (
+              <li key={i} className="flex gap-2.5 text-sm" data-testid={`${testid}-${i}`}>
+                <span className={`mt-1.5 h-1.5 w-1.5 rounded-full flex-shrink-0 ${dotClass}`} />
+                <span className="leading-snug">{it}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted-foreground text-center py-3">
+            Pas encore d'analyse disponible.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Stats() {
   const [, navigate] = useLocation();
   const { language } = useAppStore();
@@ -197,6 +273,24 @@ export default function Stats() {
   const { data: stats, isLoading: statsLoading } = useQuery<StatsData>({
     queryKey: ["/api/stats", profile?.id],
     enabled: !!profile?.id,
+  });
+
+  const { data: dashboard } = useQuery<DashboardData>({
+    queryKey: ["/api/dashboard", profile?.id],
+    enabled: !!profile?.id,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+
+  const {
+    data: analysis,
+    isLoading: analysisLoading,
+    isError: analysisError,
+  } = useQuery<DashboardAnalysisData>({
+    queryKey: ["/api/dashboard", profile?.id, "analysis"],
+    enabled: !!profile?.id,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   if (profileLoading || statsLoading) {
@@ -244,6 +338,43 @@ export default function Stats() {
           initial="hidden"
           animate="visible"
         >
+          <motion.div variants={itemVariants}>
+            <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-primary" />
+                  Bilan du jour
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {analysisLoading ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-3/4" />
+                  </div>
+                ) : analysisError ? (
+                  <p className="text-sm leading-relaxed text-destructive" data-testid="text-daily-bilan-error">
+                    Impossible de générer ton bilan pour l'instant. Réessaie dans un moment.
+                  </p>
+                ) : (
+                  <p className="text-sm leading-relaxed" data-testid="text-daily-bilan">
+                    {analysis?.bilan || "Lance une session pour obtenir ton bilan personnalisé."}
+                  </p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <div className="flex-1 rounded-md bg-muted/50 p-2 text-center">
+                    <p className="text-lg font-bold" data-testid="text-today-cards">{dashboard?.today.cards ?? 0}</p>
+                    <p className="text-[11px] text-muted-foreground">cartes aujourd'hui</p>
+                  </div>
+                  <div className="flex-1 rounded-md bg-muted/50 p-2 text-center">
+                    <p className="text-lg font-bold" data-testid="text-today-sessions">{dashboard?.today.sessions ?? 0}</p>
+                    <p className="text-[11px] text-muted-foreground">session(s) aujourd'hui</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
           <motion.div variants={itemVariants}>
             <Card className="bg-gradient-to-br from-primary to-primary/80 text-primary-foreground border-0 relative overflow-visible">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
@@ -353,6 +484,109 @@ export default function Stats() {
             </Card>
           </motion.div>
 
+          {dashboard && dashboard.scoreHistory.length >= 2 && (
+            <motion.div variants={itemVariants}>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-primary" />
+                    Progression des scores
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-44" data-testid="chart-score-history">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={dashboard.scoreHistory.map((p, i) => ({ ...p, idx: i + 1 }))}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                        <XAxis dataKey="idx" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
+                        <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" width={28} />
+                        <Tooltip
+                          contentStyle={{
+                            background: "hsl(var(--card))",
+                            border: "1px solid hsl(var(--border))",
+                            borderRadius: 8,
+                            fontSize: 12,
+                          }}
+                          labelFormatter={(l) => `Débrief ${l}`}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="overall"
+                          stroke="hsl(var(--primary))"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          name="Score global"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  {dashboard.avgScores && (
+                    <div className="grid grid-cols-4 gap-2 mt-3">
+                      {([
+                        ["Clarté", "clarity"],
+                        ["Cadre", "frame"],
+                        ["Ton", "tone"],
+                        ["Concision", "concision"],
+                      ] as const).map(([label, key]) => (
+                        <div key={key} className="text-center">
+                          <p className="text-base font-bold" data-testid={`text-avgscore-${key}`}>
+                            {dashboard.avgScores![key]}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">{label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {analysisLoading ? (
+            <motion.div variants={itemVariants}>
+              <Card>
+                <CardContent className="p-6 space-y-2">
+                  <Skeleton className="h-4 w-1/3" />
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-2/3" />
+                </CardContent>
+              </Card>
+            </motion.div>
+          ) : analysis && !analysis.empty ? (
+            <>
+              <motion.div variants={itemVariants}>
+                <InsightList
+                  icon={ThumbsUp}
+                  title="Points forts"
+                  items={analysis.pointsForts}
+                  accent="text-green-500"
+                  dotClass="bg-green-500"
+                  testid="item-strength"
+                />
+              </motion.div>
+              <motion.div variants={itemVariants}>
+                <InsightList
+                  icon={AlertTriangle}
+                  title="Points faibles"
+                  items={analysis.pointsFaibles}
+                  accent="text-orange-500"
+                  dotClass="bg-orange-500"
+                  testid="item-weakness"
+                />
+              </motion.div>
+              <motion.div variants={itemVariants}>
+                <InsightList
+                  icon={Lightbulb}
+                  title="Axes d'amélioration"
+                  items={analysis.axesAmelioration}
+                  accent="text-blue-500"
+                  dotClass="bg-blue-500"
+                  testid="item-axis"
+                />
+              </motion.div>
+            </>
+          ) : null}
+
           <motion.div variants={itemVariants}>
             <Card>
               <CardHeader className="pb-2">
@@ -420,7 +654,7 @@ export default function Stats() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-orange-500" />
-                  {t.stats.weakPoints}
+                  Tags à retravailler
                 </CardTitle>
               </CardHeader>
               <CardContent>

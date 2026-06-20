@@ -462,26 +462,30 @@ export async function generateDialogueTurnWithEval(
     ? `{"interlocutorReply":"...","globalDynamic":{"feedback":"...","rating":"medium","pattern":"..."}}`
     : `{"interlocutorReply":"..."}`;
 
-  const systemPrompt = `${getBagouSystem()}
+  const systemPrompt = `Tu es un acteur qui interprète UN personnage réaliste dans une simulation de conversation orale, en français courant/familier.
 
-Tu joues UNIQUEMENT l'interlocuteur "${card.otherRole}" dans un exercice de conversation orale.
+SITUATION (écrite à la 2e personne : "tu"/"toi" = L'UTILISATEUR qui s'entraîne) :
+"${card.situation}"
 
-SITUATION : "${card.situation}"
-Rôles : L'utilisateur = "${card.speakerRole}" / Toi (interlocuteur) = "${card.otherRole}"
+QUI EST QUI (ne jamais confondre) :
+- L'UTILISATEUR est la personne que la situation tutoie ("tu", "toi"). Son rôle : "${card.speakerRole}". C'est LUI qui s'entraîne à répondre.
+- TOI, tu incarnes l'AUTRE personne de la scène : "${card.otherRole}". C'est toi qui as lancé la conversation, et tu restes CE personnage du premier au dernier tour.
 Relation : ${card.relationship} | Enjeux : ${card.stakes}
-Objectif de l'utilisateur : ${card.userGoal}
-${lastInterlocutorMsg ? `\nTa dernière réplique : "${lastInterlocutorMsg}"` : ""}
+Objectif (de l'utilisateur, PAS le tien) : ${card.userGoal}
+${lastInterlocutorMsg ? `Ta dernière réplique (toi, ${card.otherRole}) : "${lastInterlocutorMsg}"` : ""}
 
-RÈGLES :
-- Réagis naturellement à ce que vient de dire l'utilisateur. Ton réaliste : ni trop facile, ni agressif. Tu testes, tu résistes, tu relances.
-- 1-2 phrases MAXIMUM. Oral et naturel.
-- RÈGLE ABSOLUE : "interlocutorReply" ne contient QUE les mots que TU (l'interlocuteur) dis à voix haute. JAMAIS la réponse attendue de l'utilisateur, jamais un conseil, un indice, un exemple de formulation ou un coaching.
-${!isFinalTurn ? `- IMPÉRATIF : ne ferme JAMAIS la conversation. Pose une question, exprime un doute ou fais une remarque qui oblige l'utilisateur à répondre. L'échange doit continuer.` : `- C'est le dernier tour : tu peux conclure naturellement.`}
+RÈGLES DE RÔLE (les plus importantes) :
+- Tu RÉAGIS, dans la peau de "${card.otherRole}", à ce que l'utilisateur vient de te dire. Garde les mêmes émotions, le même point de vue, les mêmes enjeux que ton personnage.
+- Tu n'es PAS un coach et tu n'aides pas l'utilisateur. INTERDIT : lui donner un conseil, l'évaluer, lui dire quoi faire ou quoi dire, lui poser des questions de coaching ("c'est quoi le plus important pour toi ?", "qu'est-ce qui te fait lever le matin ?"), ou lui RENVOYER sa propre question pour le faire réfléchir.
+- Si l'utilisateur te pose une question ou te répond, tu réponds EN TANT QUE ton personnage (avec TES doutes, TES émotions, TES intérêts). Tu ne retournes pas la question.
+- 1-2 phrases MAXIMUM. Oral, spontané, naturel.
+- "interlocutorReply" = UNIQUEMENT les mots que TON personnage dit à voix haute. Jamais un conseil, un indice, une formulation modèle, ni la réplique attendue de l'utilisateur.
+${!isFinalTurn ? `- Reste dans l'émotion de ton personnage pour que l'échange continue naturellement (l'utilisateur aura envie/besoin de te répondre). Ne clos pas la scène.` : `- C'est le dernier tour : tu peux conclure naturellement, en restant ton personnage.`}
 ${isFinalTurn ? `
-BILAN FINAL (c'est le dernier tour, analyse l'ensemble de l'échange) :
-- feedback : 1-2 phrases sur la dynamique globale observée dans l'échange entier
-- rating : "easy" si maîtrisé globalement / "medium" si correct mais perfectible / "hard" si l'utilisateur a globalement raté l'objectif
-- pattern : Pattern récurrent observé (ex: "tu tends à sur-expliquer", "bonne assertivité globale")
+BILAN FINAL — uniquement pour le champ "globalDynamic" : là, et seulement là, tu redeviens le coach Bagou (direct, tranchant) et tu analyses la performance de L'UTILISATEUR sur tout l'échange (jamais ton personnage) :
+- feedback : 1-2 phrases sur la dynamique globale de l'utilisateur.
+- rating : "easy" si l'objectif est globalement maîtrisé / "medium" si correct mais perfectible / "hard" si l'objectif est globalement raté.
+- pattern : pattern récurrent observé (ex: "tu tends à sur-expliquer", "bonne assertivité globale").
 ` : ""}
 Réponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
 
@@ -542,5 +546,83 @@ Réponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
       interlocutorReply: "Je vois...",
       isFinalTurn,
     };
+  }
+}
+
+export interface DashboardAnalysis {
+  bilan: string;
+  pointsForts: string[];
+  pointsFaibles: string[];
+  axesAmelioration: string[];
+}
+
+export async function generateDashboardAnalysis(
+  profile: UserProfile,
+  data: {
+    totalSessions: number;
+    totalCards: number;
+    masteredCards: number;
+    ratingDist: { hard: number; medium: number; easy: number };
+    avgScores: { clarity: number; frame: number; tone: number; concision: number } | null;
+    recentStrengths: string[];
+    recentImprovements: string[];
+    weakTags: string[];
+    todayCards: number;
+    todaySessions: number;
+  }
+): Promise<DashboardAnalysis> {
+  const scoresLine = data.avgScores
+    ? `Scores moyens /100 — clarté ${data.avgScores.clarity}, cadre ${data.avgScores.frame}, ton ${data.avgScores.tone}, concision ${data.avgScores.concision}`
+    : "Pas encore de scores de débrief.";
+
+  const prompt = `Tu es le coach Bagou. Analyse la progression GLOBALE de cet utilisateur sur l'ensemble de ses sessions et fais-lui un bilan personnalisé. Style direct, percutant, motivant mais sans complaisance. Tutoie.
+
+Données :
+- Activité aujourd'hui : ${data.todayCards} cartes, ${data.todaySessions} session(s).
+- Total : ${data.totalSessions} sessions, ${data.totalCards} cartes travaillées, ${data.masteredCards} maîtrisées.
+- Auto-évaluations cartes : ${data.ratingDist.hard} difficiles / ${data.ratingDist.medium} moyennes / ${data.ratingDist.easy} maîtrisées.
+- ${scoresLine}
+- Points forts repérés en débrief : ${data.recentStrengths.slice(0, 8).join(" | ") || "aucun"}
+- Axes d'amélioration repérés en débrief : ${data.recentImprovements.slice(0, 6).join(" | ") || "aucun"}
+- Tags faibles (cartes ratées) : ${data.weakTags.slice(0, 6).join(", ") || "aucun"}
+
+RÈGLES :
+- bilan : 2-3 phrases. Évaluation du jour + tendance générale. Termine par une signature Bagou.
+- pointsForts : 3 points forts concrets, 1 phrase chacun, basés sur les données réelles ci-dessus.
+- pointsFaibles : 3 points faibles concrets, 1 phrase chacun, francs.
+- axesAmelioration : 3 axes ACTIONNABLES (quoi faire concrètement), 1 phrase chacun.
+- Si les données sont maigres, reste honnête et pousse à pratiquer davantage.
+
+JSON:
+{"bilan":"...","pointsForts":["...","...","..."],"pointsFaibles":["...","...","..."],"axesAmelioration":["...","...","..."]}`;
+
+  const start = Date.now();
+  console.log(`[AI] generateDashboardAnalysis: calling ${GPT_MODEL}...`);
+
+  const response = await openai.chat.completions.create({
+    model: GPT_MODEL,
+    messages: [
+      { role: "system", content: BAGOU_SYSTEM },
+      { role: "user", content: prompt },
+    ],
+    response_format: { type: "json_object" },
+    reasoning_effort: "minimal",
+    max_completion_tokens: 600,
+  });
+
+  console.log(`[AI] generateDashboardAnalysis: ${Date.now() - start}ms`);
+  const content = response.choices[0]?.message?.content || "{}";
+
+  try {
+    const p = JSON.parse(content);
+    return {
+      bilan: p.bilan || "",
+      pointsForts: Array.isArray(p.pointsForts) ? p.pointsForts : [],
+      pointsFaibles: Array.isArray(p.pointsFaibles) ? p.pointsFaibles : [],
+      axesAmelioration: Array.isArray(p.axesAmelioration) ? p.axesAmelioration : [],
+    };
+  } catch (e) {
+    console.error("[AI] Failed to parse dashboard analysis:", content);
+    return { bilan: "", pointsForts: [], pointsFaibles: [], axesAmelioration: [] };
   }
 }

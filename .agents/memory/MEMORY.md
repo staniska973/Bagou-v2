@@ -3,3 +3,4 @@
 - [AI latency tuning](ai-latency-tuning.md) — Gemini 2.5-flash needs `thinkingConfig.thinkingBudget:0` to be fast (~7.6s→~1.2s); never generate AI JSON fields the client never reads; vocal end-to-end bounded by STT+TTS.
 - [Session opening line](session-opening-line.md) — opener is extracted verbatim from `card.situation` (no LLM); empty ⇒ user speaks first. Also: declare derived consts before effects that use them.
 - [E2E card/parcours flows](e2e-card-flows.md) — drive auth-gated rating/celebration/parcours in Playwright; shrink due-queue by inserting future srs_states for all-but-N cards.
+- [Per-profile access control](per-profile-access-control.md) — auth/ownership NOT applied app-wide; new `/api/.../:profileId` routes must add `isAuthenticated` + `profile.userId === claims.sub` guard.
