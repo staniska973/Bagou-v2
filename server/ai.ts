@@ -130,6 +130,7 @@ JSON:
       { role: "user", content: prompt },
     ],
     response_format: { type: "json_object" },
+    reasoning_effort: "minimal",
     max_completion_tokens: 300,
   });
 
@@ -215,6 +216,7 @@ JSON:
         { role: "user", content: prompt },
       ],
       response_format: { type: "json_object" },
+      reasoning_effort: "minimal",
       max_completion_tokens: 250,
     });
     content = response.choices[0]?.message?.content || "{}";
@@ -285,6 +287,7 @@ RÈGLES DU PERSONNAGE :
     model: GPT_MODEL,
     messages,
     response_format: { type: "json_object" },
+    reasoning_effort: "minimal",
     max_completion_tokens: 250,
   });
 
@@ -337,6 +340,7 @@ JSON:
       { role: "user", content: prompt },
     ],
     response_format: { type: "json_object" },
+    reasoning_effort: "minimal",
     max_completion_tokens: 400,
   });
 
@@ -414,6 +418,7 @@ RÈGLE ABSOLUE : tu n'es QUE l'interlocuteur "${card.otherRole}". Tu ne souffles
       },
       { role: "user", content: prompt },
     ],
+    reasoning_effort: "minimal",
     max_completion_tokens: 80,
   });
 
@@ -488,6 +493,7 @@ Réponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
     model: GPT_MODEL,
     messages,
     response_format: { type: "json_object" },
+    reasoning_effort: "minimal",
     max_completion_tokens: isFinalTurn ? 600 : 350,
   });
 

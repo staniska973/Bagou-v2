@@ -486,6 +486,7 @@ async function generateBatch(
         model: MODEL,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
+        reasoning_effort: "minimal",
         max_completion_tokens: 4000,
       });
 
