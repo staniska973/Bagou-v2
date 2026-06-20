@@ -66,6 +66,10 @@ export function VocalStep({
       audioRef.current.pause();
       audioRef.current = null;
     }
+    // Re-enable the live mic in case a clip was muting it while it played.
+    streamRef.current?.getAudioTracks().forEach((t) => {
+      t.enabled = true;
+    });
     setTtsPlayingId(null);
     setTtsLoadingId(null);
     const resolve = ttsResolveRef.current;
@@ -155,6 +159,10 @@ export function VocalStep({
             if (ttsAbortRef.current === controller) ttsAbortRef.current = null;
             const done = () => {
               URL.revokeObjectURL(url);
+              // Un-mute the live mic now that the clip has finished.
+              streamRef.current?.getAudioTracks().forEach((t) => {
+                t.enabled = true;
+              });
               if (audioRef.current === audio) audioRef.current = null;
               setTtsPlayingId((c) => (c === id ? null : c));
               if (ttsResolveRef.current === resolve) ttsResolveRef.current = null;
@@ -164,6 +172,11 @@ export function VocalStep({
             audio.onerror = done;
             setTtsLoadingId((c) => (c === id ? null : c));
             setTtsPlayingId(id);
+            // Mute the live mic while the clip is audible so a replay can't
+            // bleed into the user's recording / transcription.
+            streamRef.current?.getAudioTracks().forEach((t) => {
+              t.enabled = false;
+            });
             audio.play().catch(done);
           })
           .catch(() => {
@@ -321,6 +334,9 @@ export function VocalStep({
   }, [ensureStream, handleUserAudio, setupAnalyser]);
 
   const stopListening = () => {
+    // Stop any replay first so its clip can't keep playing (and the mic stays
+    // un-muted) once we hand the recording off for transcription.
+    stopTts();
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   };
 
