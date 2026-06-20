@@ -240,7 +240,23 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       }
 
       const result = await generateModelAnswer(profile, card, userAnswer);
-      const finalScoring = await scoreUserAnswer(profile, card, userAnswer, result.modelAnswer);
+
+      // Scoring must never block the model answer. If it fails (e.g. the scoring
+      // provider times out or errors), still return the answer so the user always
+      // sees "la réponse Bagou" instead of an empty screen.
+      let finalScoring;
+      try {
+        finalScoring = await scoreUserAnswer(profile, card, userAnswer, result.modelAnswer);
+      } catch (scoreError) {
+        console.error("scoreUserAnswer failed; returning model answer without scoring:", scoreError);
+        finalScoring = {
+          pass: true,
+          ratingSuggested: "medium" as const,
+          oneFix: "",
+          redoPrompt: "",
+          feedback: "",
+        };
+      }
 
       res.json({
         modelAnswer: result.modelAnswer,

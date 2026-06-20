@@ -204,7 +204,11 @@ JSON:
       config: {
         responseMimeType: "application/json",
         temperature: 0.7,
-        maxOutputTokens: 8192,
+        maxOutputTokens: 1024,
+        // Disable Gemini "thinking" — the latency equivalent of reasoning_effort:"minimal".
+        // Without this, gemini-2.5-flash spends several extra seconds reasoning before
+        // emitting the small scoring JSON (measured ~7.6s vs ~1.5s).
+        thinkingConfig: { thinkingBudget: 0 },
       },
     });
     content = response.text || "{}";
@@ -394,35 +398,48 @@ export interface DialogueTurnResult {
   globalDynamic?: GlobalDynamic;
 }
 
+// The interlocutor's opening line is already authored inside each card's
+// `situation` (the quoted hook, e.g. ...se retourne et dit : "Ce café est bon ?").
+// We extract it verbatim instead of asking the model to invent one — the model
+// often produced the line the USER was supposed to say, and this is instant
+// (no LLM round-trip). Cards with no quoted hook are "à toi de parler" scenes
+// where the user speaks first, so we return "" and let the user open.
+export function extractInterlocutorOpening(situation: string | null | undefined): string | null {
+  if (!situation) return null;
+  const s = situation.trim();
+  const clean = (t: string) => t.trim();
+  // 1. French guillemets « ... »
+  let m = s.match(/«\s*([^»]+?)\s*»/);
+  if (m && clean(m[1])) return clean(m[1]);
+  // 2. Curly double quotes “ ... ”
+  m = s.match(/\u201C\s*([^\u201D]+?)\s*\u201D/);
+  if (m && clean(m[1])) return clean(m[1]);
+  // 3. Straight double quotes " ... " (first span)
+  m = s.match(/"([^"]+?)"/);
+  if (m && clean(m[1])) return clean(m[1]);
+  // 4. Single quotes introduced by a colon. The closing quote is a single-quote
+  //    NOT followed by a letter — French elision apostrophes (l'un, n'arrive,
+  //    c'est, aujourd'hui) are always followed by a letter, so they're skipped.
+  const intro = s.match(/[:：]\s*(['\u2018\u2019])/);
+  if (intro && intro.index !== undefined) {
+    const rest = s.slice(intro.index + intro[0].length);
+    const close = rest.match(/['\u2018\u2019](?![A-Za-zÀ-ÿ])/);
+    if (close && close.index !== undefined) {
+      const speech = clean(rest.slice(0, close.index));
+      if (speech) return speech;
+    } else {
+      const speech = clean(rest.replace(/['\u2018\u2019]\s*[.!?…]*\s*$/, ""));
+      if (speech) return speech;
+    }
+  }
+  return null;
+}
+
 export async function generateOpeningLine(
   card: MotherCard,
-  profile: UserProfile | null | undefined
+  _profile: UserProfile | null | undefined
 ): Promise<string> {
-  const prompt = `Tu joues le rôle de : "${card.otherRole}"
-Relation avec l'utilisateur : ${card.relationship}
-Situation : ${card.situation}
-Enjeu : ${card.stakes}
-${profile?.tuVous === "vous" ? "Utilise le vouvoiement." : "Utilise le tutoiement."}
-
-Ta PREMIÈRE ligne concrète pour lancer la scène. C'est ce que TU dis à l'utilisateur pour déclencher la situation.
-1 à 2 phrases MAX. Direct, réaliste, oral. Parle directement à la personne en face de toi.
-
-RÈGLE ABSOLUE : tu n'es QUE l'interlocuteur "${card.otherRole}". Tu ne souffles jamais, ne suggères jamais et ne formules jamais à la place de l'utilisateur ce qu'il devrait te répondre. Aucun conseil, aucun coaching, aucun exemple de réponse, aucun méta-commentaire — uniquement ta réplique d'interlocuteur.`;
-
-  const response = await openai.chat.completions.create({
-    model: GPT_MODEL,
-    messages: [
-      {
-        role: "system",
-        content: "Tu joues UNIQUEMENT le personnage de l'interlocuteur dans une mise en scène pédagogique. Tu ne dis JAMAIS la réplique de l'utilisateur ni le moindre indice sur ce qu'il devrait répondre : tu lui lances seulement la situation. Réponds UNIQUEMENT avec ta réplique d'ouverture, sans guillemets ni préfixe. Langue : français.",
-      },
-      { role: "user", content: prompt },
-    ],
-    reasoning_effort: "minimal",
-    max_completion_tokens: 80,
-  });
-
-  return response.choices[0]?.message?.content?.trim() || "";
+  return extractInterlocutorOpening(card.situation) || "";
 }
 
 export async function generateDialogueTurnWithEval(
@@ -436,44 +453,35 @@ export async function generateDialogueTurnWithEval(
   const isFinalTurn = turnNumber >= maxTurns;
   const lastInterlocutorMsg = [...history].reverse().find((m) => m.role === "assistant")?.content || "";
 
+  // The vocal step only ever uses interlocutorReply (+ globalDynamic on the final
+  // turn). The old prompt also generated a full turn evaluation (modelAnswer + 3
+  // variants + comment) on EVERY turn that nothing ever read — that's ~250 wasted
+  // output tokens per turn and several seconds of latency. We now generate only
+  // what the client consumes.
   const jsonSchema = isFinalTurn
-    ? `{"turnEval":{"score":"ok","comment":"...","modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."}},"interlocutorReply":"...","globalDynamic":{"feedback":"...","rating":"medium","pattern":"..."}}`
-    : `{"turnEval":{"score":"ok","comment":"...","modelAnswer":"...","variants":{"safe":"...","medium":"...","bold":"..."}},"interlocutorReply":"..."}`;
+    ? `{"interlocutorReply":"...","globalDynamic":{"feedback":"...","rating":"medium","pattern":"..."}}`
+    : `{"interlocutorReply":"..."}`;
 
   const systemPrompt = `${getBagouSystem()}
 
-Tu joues deux rôles simultanément dans un exercice de communication :
+Tu joues UNIQUEMENT l'interlocuteur "${card.otherRole}" dans un exercice de conversation orale.
 
 SITUATION : "${card.situation}"
-Rôles : L'utilisateur = "${card.speakerRole}" / Interlocuteur = "${card.otherRole}"
+Rôles : L'utilisateur = "${card.speakerRole}" / Toi (interlocuteur) = "${card.otherRole}"
 Relation : ${card.relationship} | Enjeux : ${card.stakes}
 Objectif de l'utilisateur : ${card.userGoal}
-Anti-patterns à éviter : ${card.antiPatterns?.join(", ") || "aucun"}
-${lastInterlocutorMsg ? `\nDERNIÈRE RÉPLIQUE DE L'INTERLOCUTEUR (à laquelle l'utilisateur répond MAINTENANT) :\n"${lastInterlocutorMsg}"` : ""}
+${lastInterlocutorMsg ? `\nTa dernière réplique : "${lastInterlocutorMsg}"` : ""}
 
----
-RÔLE 1 — ÉVALUATEUR BAGOU (tu évalues la réplique de l'utilisateur pour CE tour précis) :
-
-RÈGLES DE SCORE — applique dans cet ordre, sans exception :
-1. score "weak" OBLIGATOIRE si : réponse d'un ou deux mots seuls ("oui", "non", "ok", "ouais", "peut-être", "d'accord", "bien sûr", "pourquoi pas") / l'utilisateur se justifie ou s'excuse / la réponse ne répond PAS à la dernière réplique de l'interlocuteur / fuite ou changement de sujet / réponse vague qui ne fait pas avancer l'objectif
-2. score "ok" si : la réponse va dans le bon sens, ne tombe dans aucun anti-pattern, mais manque de punch, est trop longue, ou reste en surface
-3. score "strong" SEULEMENT si : 1-2 phrases MAX, directe, assertive, tient le cadre, répond précisément à la dernière réplique ET fait avancer l'objectif
-
-- comment : 1 phrase Bagou tranchante. Si weak → nomme le problème sans ménagement. Si strong → valide avec élan.
-- modelAnswer : Réponse idéale en réaction DIRECTE à la dernière réplique de l'interlocuteur ci-dessus. 1-2 phrases. Oral, naturel, style Bagou. Elle DOIT logiquement répondre à ce que l'interlocuteur vient de dire.
-- variants : 3 alternatives ancrées sur LA MÊME dernière réplique (safe = prudente mais ferme, medium = directe, bold = piquante). Chaque variante est une réponse cohérente à cette dernière réplique.
-
-RÔLE 2 — INTERLOCUTEUR (tu joues "${card.otherRole}") :
-- Tu réagis naturellement à ce que vient de dire l'utilisateur
-- Ton réaliste : ni trop facile, ni agressif. Tu testes, tu résistes, tu relances.
-- 1-2 phrases maximum. Oral et naturel.
-- RÈGLE ABSOLUE : "interlocutorReply" ne contient QUE les mots que l'interlocuteur dit à voix haute. JAMAIS la réponse attendue de l'utilisateur, jamais un conseil, un indice, un exemple de formulation ou un coaching. La réponse modèle et les variantes restent EXCLUSIVEMENT dans "turnEval" (le seul champ dit à voix haute est "interlocutorReply").
-${!isFinalTurn ? `- IMPÉRATIF : ne ferme JAMAIS la conversation. Pose une question, exprime un doute, fais une remarque qui oblige l'utilisateur à répondre. L'échange doit continuer.` : `- C'est le dernier tour : tu peux conclure naturellement.`}
+RÈGLES :
+- Réagis naturellement à ce que vient de dire l'utilisateur. Ton réaliste : ni trop facile, ni agressif. Tu testes, tu résistes, tu relances.
+- 1-2 phrases MAXIMUM. Oral et naturel.
+- RÈGLE ABSOLUE : "interlocutorReply" ne contient QUE les mots que TU (l'interlocuteur) dis à voix haute. JAMAIS la réponse attendue de l'utilisateur, jamais un conseil, un indice, un exemple de formulation ou un coaching.
+${!isFinalTurn ? `- IMPÉRATIF : ne ferme JAMAIS la conversation. Pose une question, exprime un doute ou fais une remarque qui oblige l'utilisateur à répondre. L'échange doit continuer.` : `- C'est le dernier tour : tu peux conclure naturellement.`}
 ${isFinalTurn ? `
-RÔLE 3 — BILAN FINAL (c'est le dernier tour, analyse l'ensemble de l'échange) :
+BILAN FINAL (c'est le dernier tour, analyse l'ensemble de l'échange) :
 - feedback : 1-2 phrases sur la dynamique globale observée dans l'échange entier
 - rating : "easy" si maîtrisé globalement / "medium" si correct mais perfectible / "hard" si l'utilisateur a globalement raté l'objectif
-- pattern : Pattern récurrent observé (ex: "tu tends à sur-expliquer", "bonne assertivité globale", "montée en puissance progressive")
+- pattern : Pattern récurrent observé (ex: "tu tends à sur-expliquer", "bonne assertivité globale")
 ` : ""}
 Réponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
 
@@ -494,7 +502,7 @@ Réponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
     messages,
     response_format: { type: "json_object" },
     reasoning_effort: "minimal",
-    max_completion_tokens: isFinalTurn ? 600 : 350,
+    max_completion_tokens: isFinalTurn ? 220 : 90,
   });
 
   const elapsed = Date.now() - start;
@@ -504,11 +512,13 @@ Réponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
   try {
     const parsed = JSON.parse(content);
     return {
+      // turnEval is no longer generated (the vocal step never reads it); kept as a
+      // stub so the DialogueTurnResult shape and isProposalRewrite path stay valid.
       turnEval: {
-        score: parsed.turnEval?.score || "ok",
-        comment: parsed.turnEval?.comment || "",
-        modelAnswer: parsed.turnEval?.modelAnswer || "",
-        variants: parsed.turnEval?.variants || { safe: "", medium: "", bold: "" },
+        score: "ok",
+        comment: "",
+        modelAnswer: "",
+        variants: { safe: "", medium: "", bold: "" },
       },
       interlocutorReply: parsed.interlocutorReply || "...",
       isFinalTurn,
