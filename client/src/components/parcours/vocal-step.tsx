@@ -384,6 +384,9 @@ export function VocalStep({
   }, [card.cardId, profileId, ensureStream, setupAnalyser, playTts, startListening]);
 
   const timerPct = Math.min((elapsed / SESSION_SECONDS) * 100, 100);
+  // While it's the user's turn but a replay clip is playing, the live mic is
+  // muted — surface that so they don't talk over the clip and lose words.
+  const replayPaused = phase === "listening" && ttsPlayingId !== null;
 
   if (phase === "intro") {
     return (
@@ -572,7 +575,17 @@ export function VocalStep({
       {/* Control dock — turn cue + real mic meter + button */}
       <div className="flex-shrink-0 pt-2">
         <div className="h-8 flex items-center justify-center">
-          {phase === "listening" ? (
+          {replayPaused ? (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="flex items-center gap-2 text-muted-foreground"
+              data-testid="status-vocal-paused"
+            >
+              <Volume2 className="w-3.5 h-3.5 animate-pulse" />
+              <span className="text-sm font-semibold">Lecture en cours… micro en pause</span>
+            </motion.div>
+          ) : phase === "listening" ? (
             <motion.div
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -597,7 +610,7 @@ export function VocalStep({
         </div>
 
         <div className="h-12 flex items-end justify-center my-2">
-          <MicMeter analyser={analyserRef.current} active={phase === "listening"} />
+          <MicMeter analyser={analyserRef.current} active={phase === "listening"} paused={replayPaused} />
         </div>
 
         <div className="flex items-center justify-center h-20">
@@ -629,7 +642,15 @@ export function VocalStep({
   );
 }
 
-function MicMeter({ analyser, active }: { analyser: AnalyserNode | null; active: boolean }) {
+function MicMeter({
+  analyser,
+  active,
+  paused = false,
+}: {
+  analyser: AnalyserNode | null;
+  active: boolean;
+  paused?: boolean;
+}) {
   const [bars, setBars] = useState<number[]>(() => new Array(NUM_BARS).fill(0));
   const rafRef = useRef<number | null>(null);
 
@@ -662,14 +683,21 @@ function MicMeter({ analyser, active }: { analyser: AnalyserNode | null; active:
   }, [active, analyser]);
 
   return (
-    <div className="flex items-center justify-center gap-1.5 h-full" data-testid="mic-level-meter" aria-hidden="true">
+    <div
+      className={`flex items-center justify-center gap-1.5 h-full transition-opacity duration-200 ${
+        paused ? "opacity-30" : "opacity-100"
+      }`}
+      data-testid="mic-level-meter"
+      data-paused={paused}
+      aria-hidden="true"
+    >
       {bars.map((v, i) => (
         <div
           key={i}
           className={`w-2.5 rounded-full transition-[height,background-color] duration-75 ${
-            active ? "bg-accent" : "bg-muted-foreground/25"
+            active && !paused ? "bg-accent" : "bg-muted-foreground/25"
           }`}
-          style={{ height: `${Math.max(10, v * 100)}%` }}
+          style={{ height: `${paused ? 10 : Math.max(10, v * 100)}%` }}
         />
       ))}
     </div>
