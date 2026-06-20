@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Loader2, Target, Sparkles, ArrowRight, Trophy } from "lucide-react";
+import { Mic, Square, Loader2, Target, Sparkles, ArrowRight, Trophy, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiRequest } from "@/lib/queryClient";
@@ -37,6 +37,11 @@ export function VocalStep({
   const [endGd, setEndGd] = useState<GlobalDynamic | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsAbortRef = useRef<AbortController | null>(null);
+  const ttsRequestRef = useRef(0);
+  const ttsResolveRef = useRef<(() => void) | null>(null);
+  const [ttsLoadingId, setTtsLoadingId] = useState<string | null>(null);
+  const [ttsPlayingId, setTtsPlayingId] = useState<string | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -51,12 +56,22 @@ export function VocalStep({
   const cancelledRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const cleanupAudio = () => {
+  const stopTts = useCallback(() => {
+    ttsRequestRef.current += 1;
+    if (ttsAbortRef.current) {
+      ttsAbortRef.current.abort();
+      ttsAbortRef.current = null;
+    }
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
-  };
+    setTtsPlayingId(null);
+    setTtsLoadingId(null);
+    const resolve = ttsResolveRef.current;
+    ttsResolveRef.current = null;
+    resolve?.();
+  }, []);
   const stopTimer = () => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -80,7 +95,7 @@ export function VocalStep({
   useEffect(
     () => () => {
       cancelledRef.current = true;
-      cleanupAudio();
+      stopTts();
       stopTimer();
       cleanupMeter();
       if (recorderRef.current?.state === "recording") recorderRef.current.stop();
@@ -102,34 +117,67 @@ export function VocalStep({
       ),
     ].join("\n");
 
-  const playTTS = useCallback((text: string): Promise<void> => {
-    return new Promise((resolve) => {
-      cleanupAudio();
-      fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      })
-        .then((r) => {
-          if (!r.ok) throw new Error("tts");
-          return r.blob();
+  // Single shared audio pipeline: the live conversation auto-plays each
+  // interlocutor line, and the per-bubble replay buttons reuse the exact same
+  // play/stop logic so only one clip is ever audible across the whole step.
+  const playTts = useCallback(
+    (text: string, id: string): Promise<void> => {
+      if (ttsPlayingId === id || ttsLoadingId === id) {
+        stopTts();
+        return Promise.resolve();
+      }
+      stopTts();
+      const requestId = ttsRequestRef.current;
+      const controller = new AbortController();
+      ttsAbortRef.current = controller;
+      setTtsLoadingId(id);
+      return new Promise<void>((resolve) => {
+        ttsResolveRef.current = resolve;
+        fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+          signal: controller.signal,
         })
-        .then((blob) => {
-          const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          audioRef.current = audio;
-          const end = () => {
-            URL.revokeObjectURL(url);
-            if (audioRef.current === audio) audioRef.current = null;
+          .then((r) => {
+            if (!r.ok) throw new Error("tts");
+            return r.blob();
+          })
+          .then((blob) => {
+            if (requestId !== ttsRequestRef.current) {
+              resolve();
+              return;
+            }
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            if (audioRef.current) audioRef.current.pause();
+            audioRef.current = audio;
+            if (ttsAbortRef.current === controller) ttsAbortRef.current = null;
+            const done = () => {
+              URL.revokeObjectURL(url);
+              if (audioRef.current === audio) audioRef.current = null;
+              setTtsPlayingId((c) => (c === id ? null : c));
+              if (ttsResolveRef.current === resolve) ttsResolveRef.current = null;
+              resolve();
+            };
+            audio.onended = done;
+            audio.onerror = done;
+            setTtsLoadingId((c) => (c === id ? null : c));
+            setTtsPlayingId(id);
+            audio.play().catch(done);
+          })
+          .catch(() => {
+            if (requestId === ttsRequestRef.current) {
+              setTtsLoadingId((c) => (c === id ? null : c));
+              setTtsPlayingId((c) => (c === id ? null : c));
+            }
+            if (ttsResolveRef.current === resolve) ttsResolveRef.current = null;
             resolve();
-          };
-          audio.onended = end;
-          audio.onerror = end;
-          audio.play().catch(end);
-        })
-        .catch(() => resolve());
-    });
-  }, []);
+          });
+      });
+    },
+    [ttsPlayingId, ttsLoadingId, stopTts],
+  );
 
   const ensureStream = useCallback(async (): Promise<MediaStream | null> => {
     if (streamRef.current) return streamRef.current;
@@ -168,7 +216,7 @@ export function VocalStep({
     if (doneRef.current) return;
     doneRef.current = true;
     stopTimer();
-    cleanupAudio();
+    stopTts();
     cleanupMeter();
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
     setEndGd(gd);
@@ -200,17 +248,18 @@ export function VocalStep({
           { role: "assistant", content: data.interlocutorReply },
         ];
         setMessages((prev) => [...prev, { role: "assistant", content: data.interlocutorReply }]);
+        const replyId = `msg-${historyRef.current.length - 1}`;
 
         if (data.isFinalTurn || overTime) {
           setPhase("speaking");
-          await playTTS(data.interlocutorReply);
+          await playTts(data.interlocutorReply, replyId);
           conclude(data.globalDynamic || null);
           return;
         }
 
         turnRef.current += 1;
         setPhase("speaking");
-        await playTTS(data.interlocutorReply);
+        await playTts(data.interlocutorReply, replyId);
         startListening();
       } catch {
         if (cancelledRef.current) return;
@@ -222,7 +271,7 @@ export function VocalStep({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [card.cardId, profileId, playTTS, conclude],
+    [card.cardId, profileId, playTts, conclude],
   );
 
   const handleUserAudio = useCallback(
@@ -310,13 +359,13 @@ export function VocalStep({
       if (opening) {
         historyRef.current = [{ role: "assistant", content: opening }];
         setMessages([{ role: "assistant", content: opening }]);
-        await playTTS(opening);
+        await playTts(opening, "msg-0");
       }
       startListening();
     } finally {
       startingRef.current = false;
     }
-  }, [card.cardId, profileId, ensureStream, setupAnalyser, playTTS, startListening]);
+  }, [card.cardId, profileId, ensureStream, setupAnalyser, playTts, startListening]);
 
   const timerPct = Math.min((elapsed / SESSION_SECONDS) * 100, 100);
 
@@ -459,13 +508,34 @@ export function VocalStep({
                   m.role === "user" ? "bg-primary/10 rounded-br-sm" : "bg-muted rounded-bl-sm"
                 }`}
               >
-                <p
-                  className={`text-[10px] font-semibold uppercase tracking-wide mb-0.5 ${
-                    m.role === "user" ? "text-primary/70" : "text-muted-foreground"
-                  }`}
-                >
-                  {m.role === "user" ? "Toi" : card.otherRole}
-                </p>
+                <div className="flex items-center justify-between gap-2 mb-0.5">
+                  <p
+                    className={`text-[10px] font-semibold uppercase tracking-wide ${
+                      m.role === "user" ? "text-primary/70" : "text-muted-foreground"
+                    }`}
+                  >
+                    {m.role === "user" ? "Toi" : card.otherRole}
+                  </p>
+                  {m.role === "assistant" && (
+                    <button
+                      type="button"
+                      onClick={() => playTts(m.content, `msg-${i}`)}
+                      disabled={ttsLoadingId === `msg-${i}` || (phase === "speaking" && ttsPlayingId !== `msg-${i}`)}
+                      className="flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent/10 hover:text-accent disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                      data-testid={`button-vocal-replay-${i}`}
+                      aria-label={ttsPlayingId === `msg-${i}` ? "Arrêter la lecture" : "Réécouter cette réplique"}
+                    >
+                      {ttsLoadingId === `msg-${i}` ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : ttsPlayingId === `msg-${i}` ? (
+                        <Square className="w-3 h-3 fill-current" />
+                      ) : (
+                        <Volume2 className="w-3 h-3" />
+                      )}
+                      {ttsPlayingId === `msg-${i}` ? "Stop" : "Réécouter"}
+                    </button>
+                  )}
+                </div>
                 <p className="text-[14px] leading-snug text-left text-foreground/90" data-testid={`text-vocal-turn-${i}`}>
                   {m.content}
                 </p>
