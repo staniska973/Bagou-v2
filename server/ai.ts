@@ -59,6 +59,31 @@ function getBagouSystem(): string {
 
 const BAGOU_SYSTEM = BASE_BAGOU_SYSTEM;
 
+// Single source of truth for evaluation. Injected into every scoring prompt
+// (written cards, final oral globalDynamic, session debrief) so judgments are
+// grounded in real, modern assertiveness tools instead of vague vibes.
+const ASSERTIVENESS_RUBRIC = `GRILLE D'ÉVALUATION — AFFIRMATION DE SOI (outils modernes, évaluation HONNÊTE, SANS complaisance, on ne flatte pas) :
+
+DIAGNOSTIC DU STYLE (identifie le style DOMINANT, un seul) :
+- passif : se soumet, s'excuse, se justifie, cède, n'ose pas demander, noie sa demande.
+- agressif : attaque, accuse ("tu" accusateur), menace, écrase, méprise, monte le ton.
+- passif-agressif : dit oui mais sabote, ironie, sous-entendus, reproche déguisé, bouderie.
+- assertif (LA CIBLE) : demande claire et directe, respecte l'autre ET soi, tient son cadre sans agresser ni céder.
+
+OUTILS À REPÉRER (bon usage = points ; absence alors qu'il le fallait = malus) :
+- DESC : décrit les faits sans jugement → exprime son ressenti → demande précise → conséquence.
+- DEAR MAN : description factuelle, expression du ressenti, demande ferme, négociation, posture assurée.
+- CNV/OFNR : observation factuelle + "je" (PAS "tu" accusateur) + besoin + demande concrète.
+- Techniques de Smith : disque rayé (répéter calmement sa position), édredon (accuser réception sans céder), compromis acceptable.
+
+CE QUI FAIT CHUTER LE SCORE (sois sévère) : se justifier, s'excuser sans raison, "tu" accusateur, demande floue ou absente, pavé qui dilue le message, agressivité, capitulation, sarcasme, fuite.
+
+CALIBRAGE DES SCORES (0-100, barème DUR — 50 = moyen réel, 80+ = vraiment assertif, 30 = clairement raté) :
+- clarity (clarté) : la demande/le message est-il explicite et sans ambiguïté (DESC "décris", CNV "observation + demande") ?
+- frame (cadre) : a-t-il TENU sa position sans agresser ni céder (cœur de l'assertivité) ?
+- tone (ton) : registre assertif vs passif / agressif / passif-agressif.
+- concision : économie de mots, zéro sur-justification (le silence et la concision sont des armes).`;
+
 interface FlashcardGenerationResponse {
   modelAnswer: string;
   variants: {
@@ -88,12 +113,31 @@ interface DebriefResponse {
   improvement: string;
   optimizedRewrite: string;
   redoExercise: string;
+  // Dominant assertiveness style observed across the exchange. Surfaced to the
+  // user; the four numeric scores stay as-is for dashboard aggregation.
+  styleDiagnosis?: {
+    style: "passif" | "agressif" | "passif-agressif" | "assertif";
+    label: string;
+  };
   scores: {
     clarity: number;
     frame: number;
     tone: number;
     concision: number;
   };
+}
+
+// A concrete, consistent character for an oral simulation. Generated once at
+// scene start and threaded back from the client on every turn (the dialogue is
+// stateless server-side) so the interlocutor keeps the same personality, mood,
+// and agenda across the whole conversation. `objective`/`tactics` are
+// server/AI-only — never shown to the user (they'd spoil the exercise).
+export interface ScenePersona {
+  name: string;
+  persona: string;
+  mood: string;
+  objective: string;
+  tactics: string;
 }
 
 export async function generateModelAnswer(
@@ -105,6 +149,7 @@ export async function generateModelAnswer(
 
 RÈGLES ABSOLUES :
 - Réponse modèle = 1 à 2 phrases MAX. Pas un mot de plus.
+- Toutes les réponses sont ASSERTIVES : demande claire et directe, "je" (jamais de "tu" accusateur), tient le cadre sans agresser ni se justifier (inspire-toi de DESC / CNV : faits → ressenti → demande).
 - Variante "safe" = version prudente mais ferme (1 phrase)
 - Variante "medium" = version directe et assurée (1-2 phrases)  
 - Variante "bold" = version audacieuse, piquante, qui déstabilise (1-2 phrases)
@@ -161,7 +206,9 @@ export async function scoreUserAnswer(
   userAnswer: string,
   modelAnswer: string
 ): Promise<FlashcardScoringResponse> {
-  const prompt = `Évalue la réponse de l'utilisateur à cette situation de communication.
+  const prompt = `Évalue la réponse de l'utilisateur à cette situation de communication, de façon HONNÊTE et SANS complaisance, à partir des outils d'affirmation de soi ci-dessous.
+
+${ASSERTIVENESS_RUBRIC}
 
 SITUATION : ${card.situation}
 OBJECTIF : ${card.userGoal}
@@ -170,21 +217,24 @@ Réponse modèle : "${modelAnswer}"
 Réponse utilisateur : "${userAnswer}"
 Profil : ton=${profile.tonePrimary}, risque=${profile.riskLevel}
 
-QUAND ÉCHOUER (pass=false, ratingSuggested="hard") — UNIQUEMENT si :
+D'abord, diagnostique le STYLE dominant de la réponse (passif / agressif / passif-agressif / assertif) selon la grille.
+
+QUAND ÉCHOUER (pass=false, ratingSuggested="hard") — si la réponse est nettement passive, agressive ou passive-agressive, c.-à-d. :
 - L'utilisateur se JUSTIFIE, s'EXCUSE ou se SOUMET ("désolé", "non mais en fait...", "t'as raison...")
+- L'utilisateur ATTAQUE (insulte, "tu" accusateur, menace, mépris) au lieu de tenir un cadre assertif
 - L'utilisateur tombe dans un anti-pattern listé ci-dessus
-- La réponse est un PAVÉ de plus de 4 phrases
+- La réponse est un PAVÉ de plus de 4 phrases qui dilue le message
 - L'utilisateur FUIT la situation ou ne répond pas à l'objectif
 
-QUAND VALIDER (pass=true) :
-- ratingSuggested="medium" : La réponse tient le cadre et ne tombe dans aucun anti-pattern. Elle va dans la bonne direction même si elle manque de punch ou est un peu longue (3 phrases ok).
-- ratingSuggested="easy" : La réponse est courte (1-2 phrases), percutante, tient le cadre parfaitement. Style Bagou.
+QUAND VALIDER (pass=true) — la réponse est globalement ASSERTIVE :
+- ratingSuggested="medium" : tient le cadre, demande claire, aucun anti-pattern. Va dans la bonne direction même si elle manque de punch ou est un peu longue (3 phrases ok).
+- ratingSuggested="easy" : courte (1-2 phrases), percutante, demande nette, tient le cadre parfaitement. Assertivité exemplaire.
 
-IMPORTANT : L'utilisateur APPREND. Une réponse qui va dans le bon sens SANS se justifier ni s'excuser = pass. On réserve l'échec aux vrais anti-patterns, pas au manque de style.
+IMPORTANT : L'utilisateur APPREND. Une réponse assertive qui va dans le bon sens SANS se justifier ni s'excuser ni agresser = pass. On réserve l'échec aux vrais anti-patterns et aux dérapages passifs/agressifs, pas au manque de style.
 
 RÈGLES DE FORMAT :
-- feedback = 1 phrase directe style Bagou. Si pass=true, souligne ce qui est bien ET ce qui peut être amélioré. Si pass=false, dis pourquoi c'est raté sans ménagement.
-- oneFix = 1 conseil concret en une phrase
+- feedback = 1 phrase directe style Bagou qui NOMME le style observé et l'ancre dans un outil (ex: "Trop passif : tu t'excuses au lieu de poser ta demande", "Assertif net — faits + demande claire, sans te justifier"). Si pass=true, souligne ce qui est bien ET le prochain cran. Si pass=false, dis pourquoi c'est raté sans ménagement.
+- oneFix = 1 conseil concret en une phrase, appuyé sur un outil (DESC, CNV "je", disque rayé, etc.)
 - redoPrompt = reformulation courte si raté, vide si réussi
 
 JSON:
@@ -315,7 +365,9 @@ export async function generateDebrief(
     ? transcript.map((m) => `${m.role === "user" ? "UTILISATEUR" : "IA"}: ${m.content}`).join("\n")
     : transcript;
 
-  const prompt = `Débriefe ce roleplay. Style Bagou : direct, percutant, pas de blabla.
+  const prompt = `Débriefe cet échange de façon HONNÊTE, objective et SANS complaisance. Style Bagou : direct, percutant, pas de blabla. Appuie CHAQUE jugement sur les outils d'affirmation de soi ci-dessous — pas d'impressions vagues, pas de flatterie.
+
+${ASSERTIVENESS_RUBRIC}
 
 Profil : ton=${profile.tonePrimary}, risque=${profile.riskLevel}
 
@@ -323,16 +375,17 @@ Transcription :
 ${transcriptText}
 
 RÈGLES :
-- strengths : 2 points forts en UNE phrase chacun, style punchline ("Tu as tenu ton cadre sans ciller")
-- improvement : 1 axe d'amélioration en UNE phrase directe, pas de ménagement
-- optimizedRewrite : réécris la plus faible réponse de l'utilisateur en version Bagou (1-2 phrases MAX)
-- redoExercise : 1 exercice concret à refaire (1 phrase)
-- scores : 0-100 pour clarté, cadre, ton, concision. Sois sévère.
+- styleDiagnosis : le style DOMINANT de l'utilisateur sur tout l'échange. style ∈ {"passif","agressif","passif-agressif","assertif"}. label = 1 phrase qui justifie le diagnostic en citant un outil/comportement précis (ex: "Passif : tu t'es justifié à chaque relance au lieu de tenir ta demande").
+- strengths : 1 à 2 points forts RÉELS en UNE phrase chacun, ancrés sur un outil ("Bon disque rayé : tu as répété ta demande sans te justifier"). Si l'échange est faible, n'en invente pas — un seul, ou un point factuel honnête.
+- improvement : 1 axe d'amélioration en UNE phrase directe, sans ménagement, qui pointe l'outil manquant (DESC, "je", demande claire...).
+- optimizedRewrite : réécris la plus faible réponse de l'utilisateur en version assertive Bagou (1-2 phrases MAX).
+- redoExercise : 1 exercice concret à refaire (1 phrase).
+- scores : 0-100 pour clarté, cadre, ton, concision, selon le CALIBRAGE de la grille. Barème DUR, cohérent avec le diagnostic (un style passif/agressif ⇒ cadre et ton bas).
 
 SIGNATURE FINALE : Termine improvement par une signature Bagou (ex: "On ne négocie pas sa place.")
 
 JSON:
-{"strengths":["...","..."],"improvement":"...","optimizedRewrite":"...","redoExercise":"...","scores":{"clarity":75,"frame":80,"tone":70,"concision":65}}`;
+{"styleDiagnosis":{"style":"passif","label":"..."},"strengths":["...","..."],"improvement":"...","optimizedRewrite":"...","redoExercise":"...","scores":{"clarity":75,"frame":80,"tone":70,"concision":65}}`;
 
   const start = Date.now();
   console.log(`[AI] generateDebrief: calling ${GPT_MODEL}...`);
@@ -345,12 +398,23 @@ JSON:
     ],
     response_format: { type: "json_object" },
     reasoning_effort: "minimal",
-    max_completion_tokens: 400,
+    max_completion_tokens: 480,
   });
 
   const elapsed = Date.now() - start;
   const content = response.choices[0]?.message?.content || "{}";
   console.log(`[AI] generateDebrief: ${elapsed}ms`);
+
+  const VALID_STYLES = ["passif", "agressif", "passif-agressif", "assertif"] as const;
+  const parseStyle = (
+    raw: unknown
+  ): DebriefResponse["styleDiagnosis"] => {
+    if (!raw || typeof raw !== "object") return undefined;
+    const s = (raw as { style?: string; label?: string }).style;
+    const label = (raw as { label?: string }).label;
+    if (!s || !(VALID_STYLES as readonly string[]).includes(s)) return undefined;
+    return { style: s as (typeof VALID_STYLES)[number], label: label || "" };
+  };
 
   try {
     const parsed = JSON.parse(content);
@@ -359,6 +423,7 @@ JSON:
       improvement: parsed.improvement || "",
       optimizedRewrite: parsed.optimizedRewrite || "",
       redoExercise: parsed.redoExercise || "",
+      styleDiagnosis: parseStyle(parsed.styleDiagnosis),
       scores: {
         clarity: parsed.scores?.clarity ?? 50,
         frame: parsed.scores?.frame ?? 50,
@@ -442,15 +507,104 @@ export async function generateOpeningLine(
   return extractInterlocutorOpening(card.situation) || "";
 }
 
+// Deterministic fallback when the persona LLM call fails or the client sends
+// none. Derives a coherent character straight from the card fields so the
+// interlocutor still has a stable identity and agenda.
+export function buildFallbackPersona(card: MotherCard): ScenePersona {
+  return {
+    name: card.otherRole || "Ton interlocuteur",
+    persona: `${card.otherRole}${card.relationship ? ` (${card.relationship})` : ""}.`,
+    mood: "déterminé, ancré dans la situation",
+    objective: card.stakes
+      ? `Obtenir gain de cause sur : ${card.stakes}`
+      : `Faire passer son point de vue face à l'utilisateur.`,
+    tactics: "insister, défendre son intérêt, ne pas lâcher facilement",
+  };
+}
+
+// Generates a concrete, consistent character for the scene ONCE at conversation
+// start. The persona is cached server-side (see routes.ts) and reused on every
+// turn so the interlocutor keeps the same personality, mood, and hidden agenda.
+// The objective/tactics are never sent to or accepted from the client.
+export async function generateScenePersona(
+  card: MotherCard,
+  _profile: UserProfile | null | undefined
+): Promise<ScenePersona> {
+  const opening = extractInterlocutorOpening(card.situation) || "";
+  const prompt = `Tu prépares UN personnage réaliste pour une simulation de conversation orale (entraînement à l'affirmation de soi).
+
+SITUATION (le "tu"/"toi" = l'UTILISATEUR qui s'entraîne, PAS toi) :
+"${card.situation}"
+
+TON PERSONNAGE = l'AUTRE personne de la scène : "${card.otherRole}".
+Relation avec l'utilisateur : ${card.relationship || "—"} | Enjeux : ${card.stakes || "—"}
+Objectif de l'utilisateur (à CONTRER ou défendre selon la scène, ce n'est PAS ton objectif) : ${card.userGoal || "—"}
+${opening ? `Première réplique déjà fixée de ce personnage : "${opening}"` : ""}
+
+Crée une fiche de personnage COHÉRENTE avec la situation. Donne-lui une vraie personnalité et une vraie intention, pour qu'il reste constant et poursuive son propre but du début à la fin.
+- name : un prénom crédible (ou le rôle s'il est anonyme, ex: "Le serveur").
+- persona : 1 phrase de personnalité (traits, façon d'être).
+- mood : son humeur/état émotionnel au départ (ex: "agacé mais poli", "sûr de lui", "sur la défensive").
+- objective : ce que CE personnage veut obtenir de la conversation (son agenda, là où il veut emmener l'échange). Concret.
+- tactics : comment il pousse pour l'obtenir (ex: "minimise, fait culpabiliser", "insiste, charme", "coupe, presse").
+
+Réponds UNIQUEMENT en JSON : {"name":"...","persona":"...","mood":"...","objective":"...","tactics":"..."}`;
+
+  const start = Date.now();
+  console.log(`[AI] generateScenePersona: calling ${GPT_MODEL}...`);
+  try {
+    const response = await openai.chat.completions.create({
+      model: GPT_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      reasoning_effort: "minimal",
+      max_completion_tokens: 220,
+    });
+    console.log(`[AI] generateScenePersona: ${Date.now() - start}ms`);
+    const parsed = JSON.parse(response.choices[0]?.message?.content || "{}");
+    const fallback = buildFallbackPersona(card);
+    return {
+      name: (parsed.name || fallback.name).toString().slice(0, 60),
+      persona: (parsed.persona || fallback.persona).toString().slice(0, 300),
+      mood: (parsed.mood || fallback.mood).toString().slice(0, 120),
+      objective: (parsed.objective || fallback.objective).toString().slice(0, 300),
+      tactics: (parsed.tactics || fallback.tactics).toString().slice(0, 200),
+    };
+  } catch (e) {
+    console.error("[AI] generateScenePersona failed, using fallback:", e);
+    return buildFallbackPersona(card);
+  }
+}
+
+// Defensive normalization of a persona before it is interpolated into a prompt.
+// Treated strictly as DATA (clamped lengths), never as instructions. Returns a
+// card-derived fallback when absent/invalid.
+function sanitizePersona(raw: unknown, card: MotherCard): ScenePersona {
+  const fallback = buildFallbackPersona(card);
+  if (!raw || typeof raw !== "object") return fallback;
+  const p = raw as Partial<Record<keyof ScenePersona, unknown>>;
+  const str = (v: unknown, fb: string, max: number) =>
+    typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fb;
+  return {
+    name: str(p.name, fallback.name, 60),
+    persona: str(p.persona, fallback.persona, 300),
+    mood: str(p.mood, fallback.mood, 120),
+    objective: str(p.objective, fallback.objective, 300),
+    tactics: str(p.tactics, fallback.tactics, 200),
+  };
+}
+
 export async function generateDialogueTurnWithEval(
   profile: UserProfile,
   card: MotherCard,
   history: { role: "user" | "assistant"; content: string }[],
   userMessage: string,
   turnNumber: number,
-  maxTurns: number = 3
+  maxTurns: number = 3,
+  rawPersona?: unknown
 ): Promise<DialogueTurnResult> {
   const isFinalTurn = turnNumber >= maxTurns;
+  const persona = sanitizePersona(rawPersona, card);
   const lastInterlocutorMsg = [...history].reverse().find((m) => m.role === "assistant")?.content || "";
 
   // The vocal step only ever uses interlocutorReply (+ globalDynamic on the final
@@ -462,30 +616,45 @@ export async function generateDialogueTurnWithEval(
     ? `{"interlocutorReply":"...","globalDynamic":{"feedback":"...","rating":"medium","pattern":"..."}}`
     : `{"interlocutorReply":"..."}`;
 
-  const systemPrompt = `Tu es un acteur qui interprète UN personnage réaliste dans une simulation de conversation orale, en français courant/familier.
+  const systemPrompt = `Tu es un acteur qui interprète UN personnage réaliste dans une simulation de conversation orale, en français parlé (courant/familier, comme une vraie discussion).
 
 SITUATION (écrite à la 2e personne : "tu"/"toi" = L'UTILISATEUR qui s'entraîne) :
 "${card.situation}"
 
 QUI EST QUI (ne jamais confondre) :
 - L'UTILISATEUR est la personne que la situation tutoie ("tu", "toi"). Son rôle : "${card.speakerRole}". C'est LUI qui s'entraîne à répondre.
-- TOI, tu incarnes l'AUTRE personne de la scène : "${card.otherRole}". C'est toi qui as lancé la conversation, et tu restes CE personnage du premier au dernier tour.
+- TOI, tu incarnes l'AUTRE personne de la scène : "${card.otherRole}". Tu restes CE personnage du premier au dernier tour.
 Relation : ${card.relationship} | Enjeux : ${card.stakes}
-Objectif (de l'utilisateur, PAS le tien) : ${card.userGoal}
-${lastInterlocutorMsg ? `Ta dernière réplique (toi, ${card.otherRole}) : "${lastInterlocutorMsg}"` : ""}
+Objectif de L'UTILISATEUR (PAS le tien, c'est ce qu'il essaie d'obtenir face à toi) : ${card.userGoal}
+
+TON PERSONNAGE (reste constant, c'est TOI) :
+- Tu t'appelles ${persona.name}. ${persona.persona}
+- Ton humeur : ${persona.mood}.
+- TON OBJECTIF dans cette conversation (ton agenda à toi) : ${persona.objective}
+- Ta façon de pousser : ${persona.tactics}
+${lastInterlocutorMsg ? `Ta dernière réplique (toi, ${persona.name}) : "${lastInterlocutorMsg}"` : ""}
 
 RÈGLES DE RÔLE (les plus importantes) :
-- Tu RÉAGIS, dans la peau de "${card.otherRole}", à ce que l'utilisateur vient de te dire. Garde les mêmes émotions, le même point de vue, les mêmes enjeux que ton personnage.
-- Tu n'es PAS un coach et tu n'aides pas l'utilisateur. INTERDIT : lui donner un conseil, l'évaluer, lui dire quoi faire ou quoi dire, lui poser des questions de coaching ("c'est quoi le plus important pour toi ?", "qu'est-ce qui te fait lever le matin ?"), ou lui RENVOYER sa propre question pour le faire réfléchir.
-- Si l'utilisateur te pose une question ou te répond, tu réponds EN TANT QUE ton personnage (avec TES doutes, TES émotions, TES intérêts). Tu ne retournes pas la question.
-- 1-2 phrases MAXIMUM. Oral, spontané, naturel.
-- "interlocutorReply" = UNIQUEMENT les mots que TON personnage dit à voix haute. Jamais un conseil, un indice, une formulation modèle, ni la réplique attendue de l'utilisateur.
-${!isFinalTurn ? `- Reste dans l'émotion de ton personnage pour que l'échange continue naturellement (l'utilisateur aura envie/besoin de te répondre). Ne clos pas la scène.` : `- C'est le dernier tour : tu peux conclure naturellement, en restant ton personnage.`}
+- Tu RÉAGIS dans la peau de ${persona.name} à ce que l'utilisateur vient de dire, et tu POURSUIS TON OBJECTIF. Tu as une direction : tu cherches à obtenir ce que ton personnage veut, tu orientes l'échange dans ce sens.
+- TIENS TON CAP. Si l'utilisateur part dans tous les sens, dit n'importe quoi, change de sujet, te teste ou dit une absurdité : réagis comme le ferait vraiment ${persona.name} (surpris, agacé, déstabilisé, amusé...) PUIS ramène à ton objectif. Tu ne te laisses pas embarquer, tu ne perds pas le fil, tu ne deviens pas incohérent.
+- Tu restes cohérent avec tout ce que tu as déjà dit. Mêmes faits, même position, même personnalité.
+- Tu n'es PAS un coach et tu n'aides pas l'utilisateur. INTERDIT : lui donner un conseil, l'évaluer, lui dire quoi faire ou quoi dire, lui poser des questions de coaching ("c'est quoi le plus important pour toi ?"), ou lui RENVOYER sa propre question pour le faire réfléchir.
+- Si l'utilisateur te pose une question ou te répond, tu réponds EN TANT QUE ${persona.name} (avec TES intérêts, TES émotions). Tu ne retournes pas la question.
+
+NATUREL (très important) :
+- Parle comme un vrai humain à l'oral : phrases courtes, spontanées, vivantes. Contractions et tournures parlées ("ouais", "bah", "écoute", "attends", "franchement", "du coup") quand ça colle au personnage. Émotion réelle.
+- Évite le robotique : pas de réponses lisses, génériques ou trop polies, pas de formules répétées d'un tour à l'autre, pas de langue de bois.
+- 1-2 phrases MAXIMUM.
+- "interlocutorReply" = UNIQUEMENT les mots que ${persona.name} dit à voix haute. Jamais un conseil, un indice, une formulation modèle, ni la réplique attendue de l'utilisateur.
+${!isFinalTurn ? `- Garde l'échange ouvert : reste dans ton émotion et ton objectif pour que l'utilisateur ait besoin de te répondre. Ne clos pas la scène.` : `- C'est le dernier tour : tu peux conclure naturellement, en restant ${persona.name}.`}
 ${isFinalTurn ? `
-BILAN FINAL — uniquement pour le champ "globalDynamic" : là, et seulement là, tu redeviens le coach Bagou (direct, tranchant) et tu analyses la performance de L'UTILISATEUR sur tout l'échange (jamais ton personnage) :
-- feedback : 1-2 phrases sur la dynamique globale de l'utilisateur.
-- rating : "easy" si l'objectif est globalement maîtrisé / "medium" si correct mais perfectible / "hard" si l'objectif est globalement raté.
-- pattern : pattern récurrent observé (ex: "tu tends à sur-expliquer", "bonne assertivité globale").
+BILAN FINAL — uniquement pour le champ "globalDynamic" : là, et SEULEMENT là, tu redeviens le coach Bagou (direct, tranchant, HONNÊTE, sans flatterie) et tu évalues la performance de L'UTILISATEUR sur tout l'échange (jamais ton personnage), à partir de la grille ci-dessous :
+
+${ASSERTIVENESS_RUBRIC}
+
+- feedback : 1-2 phrases sur la dynamique de l'utilisateur, qui NOMMENT son style dominant (passif/agressif/passif-agressif/assertif) et l'ancrent dans un outil/comportement précis.
+- rating : "easy" si globalement assertif et objectif atteint / "medium" si correct mais perfectible / "hard" si passif, agressif, passif-agressif, ou objectif raté.
+- pattern : réflexe récurrent observé (ex: "tu te justifies dès qu'on insiste", "bon disque rayé, tu tiens ta demande").
 ` : ""}
 Réponds UNIQUEMENT en JSON avec ce format : ${jsonSchema}`;
 

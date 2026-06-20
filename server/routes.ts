@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, generateDashboardAnalysis, updateAIRuntimeConfig, getAIRuntimeConfig, type DashboardAnalysis } from "./ai";
+import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, generateScenePersona, generateDashboardAnalysis, updateAIRuntimeConfig, getAIRuntimeConfig, type DashboardAnalysis, type ScenePersona } from "./ai";
 import { speechToText, ensureCompatibleFormat, textToSpeech } from "./replit_integrations/audio/client";
 import { insertUserProfileSchema, insertSessionEventSchema } from "@shared/schema";
 import { z } from "zod";
@@ -22,6 +22,35 @@ function isAdminSession(req: any, res: any, next: any) {
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const dashboardAnalysisCache = new Map<string, { sig: string; data: DashboardAnalysis }>();
+
+// Server-side, in-memory store for the per-session interlocutor persona. The
+// persona contains a HIDDEN agenda (objective/tactics) that must never reach the
+// client, and must never be accepted FROM the client (prompt-injection risk).
+// It is generated once at conversation start and looked up server-side on every
+// dialogue turn. Keyed by profile+card, with a TTL; regenerated on cache miss.
+const PERSONA_TTL_MS = 60 * 60 * 1000;
+const personaCache = new Map<string, { persona: ScenePersona; expires: number }>();
+function personaKey(profileId: number | string, cardId: number | string): string {
+  return `${profileId}:${cardId}`;
+}
+function setPersona(key: string, persona: ScenePersona): void {
+  const now = Date.now();
+  if (personaCache.size > 500) {
+    personaCache.forEach((v, k) => {
+      if (v.expires < now) personaCache.delete(k);
+    });
+  }
+  personaCache.set(key, { persona, expires: now + PERSONA_TTL_MS });
+}
+function getPersona(key: string): ScenePersona | null {
+  const entry = personaCache.get(key);
+  if (!entry) return null;
+  if (entry.expires < Date.now()) {
+    personaCache.delete(key);
+    return null;
+  }
+  return entry.persona;
+}
 
 function calculateNextReview(
   currentInterval: number,
@@ -1005,7 +1034,12 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
 
       const profile = profileId ? await storage.getProfile(parseInt(profileId)) : null;
       const { generateOpeningLine } = await import("./ai");
-      const openingLine = await generateOpeningLine(card, profile);
+      const [openingLine, persona] = await Promise.all([
+        generateOpeningLine(card, profile),
+        generateScenePersona(card, profile),
+      ]);
+      // Persona holds a hidden agenda — keep it server-side, never send to client.
+      setPersona(personaKey(profileId ?? "anon", cardId), persona);
       res.json({ openingLine });
     } catch (error) {
       console.error("Error generating opening line:", error);
@@ -1034,13 +1068,24 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       const settings = await storage.getAllAdminSettings();
       const maxTurns = parseInt(settings.dialogue_turns || "3");
 
+      // Persona is resolved server-side only. On cache miss (e.g. server
+      // restarted mid-session), regenerate and re-cache so the interlocutor
+      // keeps a coherent agenda for the rest of the conversation.
+      const pKey = personaKey(profileId, cardId);
+      let persona = getPersona(pKey);
+      if (!persona) {
+        persona = await generateScenePersona(card, profile);
+        setPersona(pKey, persona);
+      }
+
       const result = await generateDialogueTurnWithEval(
         profile,
         card,
         history || [],
         userMessage,
         turnNumber || 1,
-        maxTurns
+        maxTurns,
+        persona
       );
 
       if (isProposalRewrite && result.turnEval.score !== "strong") {

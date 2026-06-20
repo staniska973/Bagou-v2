@@ -397,14 +397,23 @@ export function VocalStep({
             <p className="text-base leading-relaxed font-medium mb-3" data-testid="text-vocal-situation">
               {card.situation}
             </p>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span>
-                <span className="font-semibold text-foreground/70">Toi&nbsp;:</span> {card.speakerRole}
-              </span>
-              <span className="text-muted-foreground/30">•</span>
-              <span>
-                <span className="font-semibold text-foreground/70">Face à&nbsp;:</span> {card.otherRole}
-              </span>
+            <div className="space-y-1.5 text-xs text-muted-foreground border-t border-border/50 pt-3">
+              <p>
+                <span className="font-semibold text-foreground/70">Ton rôle&nbsp;:</span> {card.speakerRole}
+              </p>
+              <p>
+                <span className="font-semibold text-foreground/70">Face à toi&nbsp;:</span> {card.otherRole}
+              </p>
+              {card.relationship && (
+                <p data-testid="text-vocal-relationship">
+                  <span className="font-semibold text-foreground/70">Relation&nbsp;:</span> {card.relationship}
+                </p>
+              )}
+              {card.stakes && (
+                <p data-testid="text-vocal-stakes">
+                  <span className="font-semibold text-foreground/70">Enjeu&nbsp;:</span> {card.stakes}
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>

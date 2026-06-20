@@ -49,6 +49,10 @@ interface FinalDebrief {
   improvement: string;
   optimizedRewrite: string;
   redoExercise: string;
+  styleDiagnosis?: {
+    style: "passif" | "agressif" | "passif-agressif" | "assertif";
+    label: string;
+  };
   scores: { clarity: number; frame: number; tone: number; concision: number };
 }
 
@@ -508,6 +512,36 @@ export default function Parcours() {
 
           {finalDebrief ? (
             <>
+              {finalDebrief.styleDiagnosis && (
+                <Card
+                  className={
+                    finalDebrief.styleDiagnosis.style === "assertif"
+                      ? "border-accent/40 bg-accent/5"
+                      : "border-destructive/40 bg-destructive/5"
+                  }
+                  data-testid="card-parcours-style"
+                >
+                  <CardContent className="p-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide mb-1.5 text-muted-foreground">
+                      Ton style dominant
+                    </p>
+                    <p
+                      className={`text-base font-bold capitalize mb-1 ${
+                        finalDebrief.styleDiagnosis.style === "assertif" ? "text-accent" : "text-destructive"
+                      }`}
+                      data-testid="text-parcours-style"
+                    >
+                      {finalDebrief.styleDiagnosis.style}
+                    </p>
+                    {finalDebrief.styleDiagnosis.label && (
+                      <p className="text-sm leading-relaxed" data-testid="text-parcours-style-label">
+                        {finalDebrief.styleDiagnosis.label}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               {finalDebrief.scores && (
                 <Card>
                   <CardContent className="p-4">
