@@ -4,4 +4,4 @@
 - [Session opening line](session-opening-line.md) — opener is extracted verbatim from `card.situation` (no LLM); empty ⇒ user speaks first. Also: declare derived consts before effects that use them.
 - [E2E card/parcours flows](e2e-card-flows.md) — drive auth-gated rating/celebration/parcours in Playwright; shrink due-queue by inserting future srs_states for all-but-N cards.
 - [Per-profile access control](per-profile-access-control.md) — auth/ownership NOT app-wide; profile-write routes must add `isAuthenticated` + `profile.userId === claims.sub` guard.
-- [Server-side roleplay persona](hidden-ai-agenda-server-side.md) — persona objective/tactics stay server-side (exposure + injection); interlocutor is reactive (user leads); cache by profile+card+gender.
+- [Server-side roleplay persona](hidden-ai-agenda-server-side.md) — persona stays server-side (exposure + injection); interlocutor reactive (user leads); cache by profile+card+gender; conclusion is AI-signaled (`sceneOver`) not pure turn-count, else closing line repeats; every concluding turn must emit `globalDynamic`.
