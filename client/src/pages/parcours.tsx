@@ -424,6 +424,7 @@ export default function Parcours() {
               key={card.cardId}
               card={card}
               profileId={profileId}
+              initialGender={profile?.interlocutorGender ?? "femme"}
               isLast={oralIndex === oralQueue.length - 1}
               onComplete={onOralComplete}
             />

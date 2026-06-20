@@ -3,8 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Mic, Square, Loader2, Target, Sparkles, ArrowRight, Trophy, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ParcoursCard } from "./card-step";
+import type { InterlocutorGender } from "@shared/schema";
 import { CelebrationRings, pickOralEncouragement } from "./session-ui";
 
 export interface GlobalDynamic {
@@ -22,11 +23,13 @@ const NUM_BARS = 7;
 export function VocalStep({
   card,
   profileId,
+  initialGender = "femme",
   isLast = false,
   onComplete,
 }: {
   card: ParcoursCard;
   profileId: number;
+  initialGender?: InterlocutorGender;
   isLast?: boolean;
   onComplete: (gd: GlobalDynamic | null, transcript: string) => void;
 }) {
@@ -35,6 +38,27 @@ export function VocalStep({
   const [elapsed, setElapsed] = useState(0);
   const [micError, setMicError] = useState(false);
   const [endGd, setEndGd] = useState<GlobalDynamic | null>(null);
+  const [gender, setGender] = useState<InterlocutorGender>(initialGender);
+
+  const persistGender = useCallback(
+    async (g: InterlocutorGender) => {
+      try {
+        await apiRequest("PATCH", `/api/profiles/${profileId}/interlocutor-gender`, {
+          interlocutorGender: g,
+        });
+        queryClient.invalidateQueries({ queryKey: ["/api/profiles/user"] });
+      } catch {
+        /* best-effort: opening + tts still send the gender explicitly */
+      }
+    },
+    [profileId],
+  );
+
+  const handleGenderChange = (g: InterlocutorGender) => {
+    if (g === gender) return;
+    setGender(g);
+    void persistGender(g);
+  };
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const ttsAbortRef = useRef<AbortController | null>(null);
@@ -140,7 +164,7 @@ export function VocalStep({
         fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text, interlocutorGender: gender }),
           signal: controller.signal,
         })
           .then((r) => {
@@ -189,7 +213,7 @@ export function VocalStep({
           });
       });
     },
-    [ttsPlayingId, ttsLoadingId, stopTts],
+    [ttsPlayingId, ttsLoadingId, stopTts, gender],
   );
 
   const ensureStream = useCallback(async (): Promise<MediaStream | null> => {
@@ -251,6 +275,7 @@ export function VocalStep({
           history: historyRef.current,
           userMessage: text,
           turnNumber: turnToSend,
+          interlocutorGender: gender,
         });
         const data = await res.json();
         if (cancelledRef.current) return;
@@ -284,7 +309,7 @@ export function VocalStep({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [card.cardId, profileId, playTts, conclude],
+    [card.cardId, profileId, playTts, conclude, gender],
   );
 
   const handleUserAudio = useCallback(
@@ -364,9 +389,17 @@ export function VocalStep({
         setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
       }, 250);
 
+      // Persist the chosen gender first so the dialogue-turn route (which reads
+      // gender from the stored profile) stays in sync with what we send here.
+      await persistGender(gender);
+
       let opening = "";
       try {
-        const r = await apiRequest("POST", "/api/session/opening", { cardId: card.cardId, profileId });
+        const r = await apiRequest("POST", "/api/session/opening", {
+          cardId: card.cardId,
+          profileId,
+          interlocutorGender: gender,
+        });
         opening = (await r.json()).openingLine || "";
       } catch {
         /* ignore */
@@ -381,7 +414,7 @@ export function VocalStep({
     } finally {
       startingRef.current = false;
     }
-  }, [card.cardId, profileId, ensureStream, setupAnalyser, playTts, startListening]);
+  }, [card.cardId, profileId, gender, persistGender, ensureStream, setupAnalyser, playTts, startListening]);
 
   const timerPct = Math.min((elapsed / SESSION_SECONDS) * 100, 100);
   // While it's the user's turn but a replay clip is playing, the live mic is
@@ -433,6 +466,31 @@ export function VocalStep({
         <p className="text-sm text-muted-foreground mb-4 text-center">
           L'autre te lance la conversation. À toi de répondre à voix haute&nbsp;— tu verras à l'écran ce qui a été compris.
         </p>
+        <div className="mb-4" data-testid="group-vocal-gender">
+          <p className="text-xs font-semibold text-foreground/70 mb-2 text-center">
+            Voix de ton interlocuteur
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant={gender === "femme" ? "default" : "outline"}
+              onClick={() => handleGenderChange("femme")}
+              className="h-11 rounded-xl"
+              data-testid="button-vocal-gender-femme"
+            >
+              Femme
+            </Button>
+            <Button
+              type="button"
+              variant={gender === "homme" ? "default" : "outline"}
+              onClick={() => handleGenderChange("homme")}
+              className="h-11 rounded-xl"
+              data-testid="button-vocal-gender-homme"
+            >
+              Homme
+            </Button>
+          </div>
+        </div>
         <Button
           onClick={beginConversation}
           className="w-full h-14 rounded-2xl text-base gap-2"

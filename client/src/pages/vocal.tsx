@@ -181,7 +181,7 @@ export default function Vocal() {
 
       <div className="flex-1 flex flex-col items-center justify-center px-6 text-center overflow-hidden">
         {view === "convo" && card && (
-          <VocalStep key={card.cardId} card={card} profileId={profileId} onComplete={onComplete} />
+          <VocalStep key={card.cardId} card={card} profileId={profileId} initialGender={profile?.interlocutorGender ?? "femme"} onComplete={onComplete} />
         )}
 
         {view === "debrief" && (

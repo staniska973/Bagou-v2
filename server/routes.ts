@@ -4,7 +4,7 @@ import multer from "multer";
 import { storage } from "./storage";
 import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, generateScenePersona, generateDashboardAnalysis, updateAIRuntimeConfig, getAIRuntimeConfig, type DashboardAnalysis, type ScenePersona } from "./ai";
 import { speechToText, ensureCompatibleFormat, textToSpeech } from "./replit_integrations/audio/client";
-import { insertUserProfileSchema, insertSessionEventSchema } from "@shared/schema";
+import { insertUserProfileSchema, insertSessionEventSchema, interlocutorGenderEnum } from "@shared/schema";
 import { z } from "zod";
 import { isAuthenticated } from "./replit_integrations/auth";
 
@@ -21,17 +21,23 @@ function isAdminSession(req: any, res: any, next: any) {
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+const genderSchema = z.enum(interlocutorGenderEnum);
+
 const dashboardAnalysisCache = new Map<string, { sig: string; data: DashboardAnalysis }>();
 
 // Server-side, in-memory store for the per-session interlocutor persona. The
-// persona contains a HIDDEN agenda (objective/tactics) that must never reach the
+// persona's objective/tactics are HIDDEN from the user and must never reach the
 // client, and must never be accepted FROM the client (prompt-injection risk).
 // It is generated once at conversation start and looked up server-side on every
-// dialogue turn. Keyed by profile+card, with a TTL; regenerated on cache miss.
+// dialogue turn. Keyed by profile+card+gender, with a TTL; regenerated on miss.
 const PERSONA_TTL_MS = 60 * 60 * 1000;
 const personaCache = new Map<string, { persona: ScenePersona; expires: number }>();
-function personaKey(profileId: number | string, cardId: number | string): string {
-  return `${profileId}:${cardId}`;
+function personaKey(
+  profileId: number | string,
+  cardId: number | string,
+  gender: string = "femme"
+): string {
+  return `${profileId}:${cardId}:${gender}`;
 }
 function setPersona(key: string, persona: ScenePersona): void {
   const now = Date.now();
@@ -160,17 +166,50 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.patch("/api/profiles/:id", async (req, res) => {
+  app.patch("/api/profiles/:id", isAuthenticated, async (req: any, res) => {
     try {
       const id = parseInt(req.params.id);
-      const profile = await storage.updateProfile(id, req.body);
-      if (!profile) {
+      const existing = await storage.getProfile(id);
+      if (!existing) {
         return res.status(404).json({ error: "Profile not found" });
       }
+      const authUserId = req.user?.claims?.sub;
+      if (!existing.userId || existing.userId !== authUserId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      // Never let the body reassign the row id or its owner.
+      const { id: _ignoreId, userId: _ignoreUserId, ...updates } = req.body ?? {};
+      const profile = await storage.updateProfile(id, updates);
       res.json(profile);
     } catch (error) {
       console.error("Error updating profile:", error);
       res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
+  // Narrow, AUTHENTICATED route to persist the interlocutor gender preference.
+  // This is what the client uses: it enforces ownership and validates the single
+  // field, so a user can only change the interlocutor gender on their own profile.
+  app.patch("/api/profiles/:id/interlocutor-gender", isAuthenticated, async (req: any, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const parsed = genderSchema.safeParse(req.body.interlocutorGender);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid interlocutorGender" });
+      }
+      const existing = await storage.getProfile(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Profile not found" });
+      }
+      const authUserId = req.user?.claims?.sub;
+      if (!existing.userId || existing.userId !== authUserId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const profile = await storage.updateProfile(id, { interlocutorGender: parsed.data });
+      res.json(profile);
+    } catch (error) {
+      console.error("Error updating interlocutor gender:", error);
+      res.status(500).json({ error: "Failed to update interlocutor gender" });
     }
   });
 
@@ -1033,13 +1072,19 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       if (!card) return res.status(404).json({ error: "Card not found" });
 
       const profile = profileId ? await storage.getProfile(parseInt(profileId)) : null;
+      // Gender drives persona name/pronouns + TTS voice. Prefer the explicit
+      // per-session choice from the client, fall back to the stored profile pref.
+      const genderParsed = genderSchema.safeParse(req.body.interlocutorGender);
+      const gender = genderParsed.success
+        ? genderParsed.data
+        : ((profile?.interlocutorGender as (typeof interlocutorGenderEnum)[number]) ?? "femme");
       const { generateOpeningLine } = await import("./ai");
       const [openingLine, persona] = await Promise.all([
         generateOpeningLine(card, profile),
-        generateScenePersona(card, profile),
+        generateScenePersona(card, profile, gender),
       ]);
-      // Persona holds a hidden agenda — keep it server-side, never send to client.
-      setPersona(personaKey(profileId ?? "anon", cardId), persona);
+      // Persona objective/tactics are hidden — keep server-side, never send to client.
+      setPersona(personaKey(profileId ?? "anon", cardId, gender), persona);
       res.json({ openingLine });
     } catch (error) {
       console.error("Error generating opening line:", error);
@@ -1070,11 +1115,18 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
 
       // Persona is resolved server-side only. On cache miss (e.g. server
       // restarted mid-session), regenerate and re-cache so the interlocutor
-      // keeps a coherent agenda for the rest of the conversation.
-      const pKey = personaKey(profileId, cardId);
+      // stays coherent for the rest of the conversation.
+      // Prefer the gender the client sent for this session (kept in sync with the
+      // opening/TTS calls) and fall back to the stored profile preference, so a
+      // failed/stale gender persist can't desync the dialogue from the opening.
+      const genderParsed = genderSchema.safeParse(req.body.interlocutorGender);
+      const gender = genderParsed.success
+        ? genderParsed.data
+        : ((profile.interlocutorGender as (typeof interlocutorGenderEnum)[number]) ?? "femme");
+      const pKey = personaKey(profileId, cardId, gender);
       let persona = getPersona(pKey);
       if (!persona) {
-        persona = await generateScenePersona(card, profile);
+        persona = await generateScenePersona(card, profile, gender);
         setPersona(pKey, persona);
       }
 
@@ -1107,8 +1159,16 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
         return res.status(400).json({ error: "No text provided" });
       }
       const settings = await storage.getAllAdminSettings();
-      const voice = (settings.tts_voice || "nova") as
+      const adminVoice = (settings.tts_voice || "nova") as
         | "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer";
+      // The roleplay interlocutor (VocalStep) sends its gender so the voice
+      // matches the character: homme -> onyx (male), femme -> nova (female).
+      // Other callers (model answer / debrief read-aloud) omit it and keep the
+      // admin-configured voice.
+      const genderParsed = genderSchema.safeParse(req.body.interlocutorGender);
+      const voice = genderParsed.success
+        ? (genderParsed.data === "homme" ? "onyx" : "nova")
+        : adminVoice;
       const buffer = await textToSpeech(text.slice(0, 1200), voice, "mp3");
       res.set("Content-Type", "audio/mpeg");
       res.set("Cache-Control", "no-store");

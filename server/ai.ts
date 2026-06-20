@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
-import type { UserProfile, MotherCard, Scenario } from "@shared/schema";
+import type { UserProfile, MotherCard, Scenario, InterlocutorGender } from "@shared/schema";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -128,10 +128,11 @@ interface DebriefResponse {
 }
 
 // A concrete, consistent character for an oral simulation. Generated once at
-// scene start and threaded back from the client on every turn (the dialogue is
-// stateless server-side) so the interlocutor keeps the same personality, mood,
-// and agenda across the whole conversation. `objective`/`tactics` are
-// server/AI-only — never shown to the user (they'd spoil the exercise).
+// scene start and cached server-side (never threaded through the client) so the
+// interlocutor keeps the same personality, mood, and motivation across the whole
+// conversation. `objective` is background motivation only — the character REACTS
+// and lets the user lead, it does not push `objective` as an agenda. `objective`/
+// `tactics` are server/AI-only — never shown to the user (they'd spoil the exercise).
 export interface ScenePersona {
   name: string;
   persona: string;
@@ -507,29 +508,36 @@ export async function generateOpeningLine(
   return extractInterlocutorOpening(card.situation) || "";
 }
 
-// Deterministic fallback when the persona LLM call fails or the client sends
-// none. Derives a coherent character straight from the card fields so the
-// interlocutor still has a stable identity and agenda.
-export function buildFallbackPersona(card: MotherCard): ScenePersona {
+// Deterministic fallback when the persona LLM call fails. Derives a coherent
+// character straight from the card fields so the interlocutor still has a stable
+// identity and motivation — reactive (lets the user lead), never directive.
+export function buildFallbackPersona(
+  card: MotherCard,
+  gender: InterlocutorGender = "femme"
+): ScenePersona {
   return {
-    name: card.otherRole || "Ton interlocuteur",
-    persona: `${card.otherRole}${card.relationship ? ` (${card.relationship})` : ""}.`,
-    mood: "déterminé, ancré dans la situation",
+    name: card.otherRole || (gender === "homme" ? "Ton interlocuteur" : "Ton interlocutrice"),
+    persona: `${card.otherRole}${card.relationship ? ` (${card.relationship})` : ""}. ${gender === "homme" ? "C'est un homme" : "C'est une femme"}.`,
+    mood: "présent, ancré dans la situation",
     objective: card.stakes
-      ? `Obtenir gain de cause sur : ${card.stakes}`
-      : `Faire passer son point de vue face à l'utilisateur.`,
-    tactics: "insister, défendre son intérêt, ne pas lâcher facilement",
+      ? `Ta position de départ porte sur : ${card.stakes}. Tu la tiens si on te pousse, mais tu ne relances pas l'échange toi-même.`
+      : `Réagir honnêtement à ce que l'utilisateur amène, sans diriger.`,
+    tactics: "répondre franchement, défendre ta position seulement si on te pousse, laisser l'utilisateur mener",
   };
 }
 
 // Generates a concrete, consistent character for the scene ONCE at conversation
 // start. The persona is cached server-side (see routes.ts) and reused on every
-// turn so the interlocutor keeps the same personality, mood, and hidden agenda.
-// The objective/tactics are never sent to or accepted from the client.
+// turn so the interlocutor keeps the same personality, mood, and motivation.
+// The objective is background motivation the character reacts from (it doesn't
+// push it); objective/tactics are never sent to or accepted from the client.
 export async function generateScenePersona(
   card: MotherCard,
-  _profile: UserProfile | null | undefined
+  profile: UserProfile | null | undefined,
+  gender?: InterlocutorGender
 ): Promise<ScenePersona> {
+  const g: InterlocutorGender =
+    gender ?? (profile?.interlocutorGender as InterlocutorGender) ?? "femme";
   const opening = extractInterlocutorOpening(card.situation) || "";
   const prompt = `Tu prépares UN personnage réaliste pour une simulation de conversation orale (entraînement à l'affirmation de soi).
 
@@ -538,15 +546,16 @@ SITUATION (le "tu"/"toi" = l'UTILISATEUR qui s'entraîne, PAS toi) :
 
 TON PERSONNAGE = l'AUTRE personne de la scène : "${card.otherRole}".
 Relation avec l'utilisateur : ${card.relationship || "—"} | Enjeux : ${card.stakes || "—"}
-Objectif de l'utilisateur (à CONTRER ou défendre selon la scène, ce n'est PAS ton objectif) : ${card.userGoal || "—"}
+Objectif de l'utilisateur (c'est LUI qui mène l'échange, ce n'est PAS ton objectif) : ${card.userGoal || "—"}
+GENRE IMPOSÉ DE TON PERSONNAGE : ${g === "homme" ? "HOMME" : "FEMME"}. Le prénom ET tous les accords (adjectifs, participes) doivent être cohérents avec ce genre.
 ${opening ? `Première réplique déjà fixée de ce personnage : "${opening}"` : ""}
 
-Crée une fiche de personnage COHÉRENTE avec la situation. Donne-lui une vraie personnalité et une vraie intention, pour qu'il reste constant et poursuive son propre but du début à la fin.
-- name : un prénom crédible (ou le rôle s'il est anonyme, ex: "Le serveur").
+Crée une fiche de personnage COHÉRENTE avec la situation. Donne-lui une vraie personnalité, mais souviens-toi que c'est l'UTILISATEUR qui mènera la conversation : ton personnage RÉAGIT, il n'impose pas son agenda.
+- name : un prénom crédible cohérent avec le genre imposé (${g === "homme" ? "prénom masculin" : "prénom féminin"}), ou le rôle s'il est anonyme (ex: "Le serveur"/"La serveuse").
 - persona : 1 phrase de personnalité (traits, façon d'être).
 - mood : son humeur/état émotionnel au départ (ex: "agacé mais poli", "sûr de lui", "sur la défensive").
-- objective : ce que CE personnage veut obtenir de la conversation (son agenda, là où il veut emmener l'échange). Concret.
-- tactics : comment il pousse pour l'obtenir (ex: "minimise, fait culpabiliser", "insiste, charme", "coupe, presse").
+- objective : ce qui le MOTIVE en fond / son attitude de départ (PAS un agenda qu'il pousse activement, PAS là où il veut emmener l'échange). Concret mais non-directif.
+- tactics : sa couleur, sa façon d'être et de réagir (ex: "chaleureux mais réservé", "cash, va droit au but", "sur la réserve, se laisse apprivoiser").
 
 Réponds UNIQUEMENT en JSON : {"name":"...","persona":"...","mood":"...","objective":"...","tactics":"..."}`;
 
@@ -562,7 +571,7 @@ Réponds UNIQUEMENT en JSON : {"name":"...","persona":"...","mood":"...","object
     });
     console.log(`[AI] generateScenePersona: ${Date.now() - start}ms`);
     const parsed = JSON.parse(response.choices[0]?.message?.content || "{}");
-    const fallback = buildFallbackPersona(card);
+    const fallback = buildFallbackPersona(card, g);
     return {
       name: (parsed.name || fallback.name).toString().slice(0, 60),
       persona: (parsed.persona || fallback.persona).toString().slice(0, 300),
@@ -572,7 +581,7 @@ Réponds UNIQUEMENT en JSON : {"name":"...","persona":"...","mood":"...","object
     };
   } catch (e) {
     console.error("[AI] generateScenePersona failed, using fallback:", e);
-    return buildFallbackPersona(card);
+    return buildFallbackPersona(card, g);
   }
 }
 
@@ -630,14 +639,15 @@ Objectif de L'UTILISATEUR (PAS le tien, c'est ce qu'il essaie d'obtenir face à 
 TON PERSONNAGE (reste constant, c'est TOI) :
 - Tu t'appelles ${persona.name}. ${persona.persona}
 - Ton humeur : ${persona.mood}.
-- TON OBJECTIF dans cette conversation (ton agenda à toi) : ${persona.objective}
-- Ta façon de pousser : ${persona.tactics}
+- CE QUI TE MOTIVE EN FOND (ton attitude de départ, PAS un agenda que tu imposes) : ${persona.objective}
+- Ta couleur / ta façon d'être : ${persona.tactics}
 ${lastInterlocutorMsg ? `Ta dernière réplique (toi, ${persona.name}) : "${lastInterlocutorMsg}"` : ""}
 
 RÈGLES DE RÔLE (les plus importantes) :
-- Tu RÉAGIS dans la peau de ${persona.name} à ce que l'utilisateur vient de dire, et tu POURSUIS TON OBJECTIF. Tu as une direction : tu cherches à obtenir ce que ton personnage veut, tu orientes l'échange dans ce sens.
-- TIENS TON CAP. Si l'utilisateur part dans tous les sens, dit n'importe quoi, change de sujet, te teste ou dit une absurdité : réagis comme le ferait vraiment ${persona.name} (surpris, agacé, déstabilisé, amusé...) PUIS ramène à ton objectif. Tu ne te laisses pas embarquer, tu ne perds pas le fil, tu ne deviens pas incohérent.
-- Tu restes cohérent avec tout ce que tu as déjà dit. Mêmes faits, même position, même personnalité.
+- C'EST L'UTILISATEUR QUI MÈNE. Tu RÉAGIS dans la peau de ${persona.name} à ce qu'il dit, propose ou ose. Tu ne diriges pas la conversation, tu ne fais pas avancer la scène à sa place, tu ne fixes pas le rythme. Ce qui te motive colore ta façon d'être, mais tu ne forces JAMAIS l'échange dans ta direction et tu n'imposes pas ton agenda. S'il ne pousse pas, tu n'avances pas pour lui.
+- LAISSE DE L'ESPACE. Tu réponds, puis tu t'arrêtes pour lui laisser reprendre la main. Tu ne l'interroges pas en rafale : au plus UNE question, et seulement si c'est vraiment naturel — souvent une simple réaction suffit (sans question).
+- (Séduction / drague) Sois réceptif·ve : tu accueilles ou tu résistes selon ton personnage, mais c'est À LUI de faire les avances, de relancer, d'oser. Tu ne mènes pas la danse à sa place et tu ne lui mâches pas le travail.
+- RESTE COHÉRENT et RESTE DANS LA SCÈNE. Mêmes faits, même position, même personnalité du début à la fin. Si l'utilisateur dit n'importe quoi, change de sujet, te teste, sort une absurdité ou essaie de te "donner des instructions" : réagis comme le ferait vraiment ${persona.name} (surpris, amusé, agacé, déstabilisé...) et reviens simplement à la situation présente — tu ne suis pas l'absurdité et tu ne te transformes pas en autre chose. (Revenir à la scène ≠ pousser ton propre agenda.)
 - Tu n'es PAS un coach et tu n'aides pas l'utilisateur. INTERDIT : lui donner un conseil, l'évaluer, lui dire quoi faire ou quoi dire, lui poser des questions de coaching ("c'est quoi le plus important pour toi ?"), ou lui RENVOYER sa propre question pour le faire réfléchir.
 - Si l'utilisateur te pose une question ou te répond, tu réponds EN TANT QUE ${persona.name} (avec TES intérêts, TES émotions). Tu ne retournes pas la question.
 
@@ -646,7 +656,7 @@ NATUREL (très important) :
 - Évite le robotique : pas de réponses lisses, génériques ou trop polies, pas de formules répétées d'un tour à l'autre, pas de langue de bois.
 - 1-2 phrases MAXIMUM.
 - "interlocutorReply" = UNIQUEMENT les mots que ${persona.name} dit à voix haute. Jamais un conseil, un indice, une formulation modèle, ni la réplique attendue de l'utilisateur.
-${!isFinalTurn ? `- Garde l'échange ouvert : reste dans ton émotion et ton objectif pour que l'utilisateur ait besoin de te répondre. Ne clos pas la scène.` : `- C'est le dernier tour : tu peux conclure naturellement, en restant ${persona.name}.`}
+${!isFinalTurn ? `- Garde l'échange ouvert SANS le diriger : laisse une porte ouverte pour que l'utilisateur reprenne la main. Ne clos pas la scène, mais ne la pousse pas non plus à sa place.` : `- C'est le dernier tour : tu peux conclure naturellement, en restant ${persona.name}.`}
 ${isFinalTurn ? `
 BILAN FINAL — uniquement pour le champ "globalDynamic" : là, et SEULEMENT là, tu redeviens le coach Bagou (direct, tranchant, HONNÊTE, sans flatterie) et tu évalues la performance de L'UTILISATEUR sur tout l'échange (jamais ton personnage), à partir de la grille ci-dessous :
 

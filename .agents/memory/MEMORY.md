@@ -1,7 +1,7 @@
 - [GPT-5 reasoning models & reasoning_effort](gpt5-reasoning-models.md) — gpt-5-mini returns EMPTY content under tight token budgets unless `reasoning_effort: "minimal"` is set; no `temperature` on gpt-5.
 - [GPT-5 API constraints](gpt5-api-constraints.md) — gpt-5* chat.completions reject custom `temperature` (HTTP 400) and `max_tokens`; use default temp + `max_completion_tokens`. Gemini keeps its own temp.
-- [AI latency tuning](ai-latency-tuning.md) — Gemini 2.5-flash needs `thinkingConfig.thinkingBudget:0` to be fast (~7.6s→~1.2s); never generate AI JSON fields the client never reads; vocal end-to-end bounded by STT+TTS.
+- [AI latency tuning](ai-latency-tuning.md) — Gemini 2.5-flash needs `thinkingConfig.thinkingBudget:0` (~7.6s→~1.2s); don't generate AI JSON the client never reads.
 - [Session opening line](session-opening-line.md) — opener is extracted verbatim from `card.situation` (no LLM); empty ⇒ user speaks first. Also: declare derived consts before effects that use them.
 - [E2E card/parcours flows](e2e-card-flows.md) — drive auth-gated rating/celebration/parcours in Playwright; shrink due-queue by inserting future srs_states for all-but-N cards.
-- [Per-profile access control](per-profile-access-control.md) — auth/ownership NOT applied app-wide; new `/api/.../:profileId` routes must add `isAuthenticated` + `profile.userId === claims.sub` guard.
-- [Hidden AI agenda stays server-side](hidden-ai-agenda-server-side.md) — a roleplay character's secret objective/tactics must never go to or come from the client (exposure + prompt-injection); cache server-side by profile+card.
+- [Per-profile access control](per-profile-access-control.md) — auth/ownership NOT app-wide; profile-write routes must add `isAuthenticated` + `profile.userId === claims.sub` guard.
+- [Server-side roleplay persona](hidden-ai-agenda-server-side.md) — persona objective/tactics stay server-side (exposure + injection); interlocutor is reactive (user leads); cache by profile+card+gender.

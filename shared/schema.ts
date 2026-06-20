@@ -15,6 +15,8 @@ export const modeEnum = ["text", "voice", "mixed"] as const;
 export const channelEnum = ["text", "irl", "voice"] as const;
 export const toneEnum = ["classy_calm", "fun_teasing", "direct", "warm_empathetic", "minimalist"] as const;
 export const riskLevelEnum = ["safe", "medium", "bold"] as const;
+export const interlocutorGenderEnum = ["femme", "homme"] as const;
+export type InterlocutorGender = (typeof interlocutorGenderEnum)[number];
 export const difficultyEnum = ["n1", "n2", "n3"] as const;
 export const ratingEnum = ["hard", "medium", "easy"] as const;
 export const themeIdEnum = ["SOCIAL", "PRO", "DAILY", "RELATIONNEL", "DIFFICULT", "STORY", "CULTURE_SOCIALE"] as const;
@@ -28,6 +30,7 @@ export const userProfiles = pgTable("user_profiles", {
   tonePrimary: text("tone_primary").notNull().default("classy_calm"),
   toneSecondary: text("tone_secondary").notNull().default("warm_empathetic"),
   riskLevel: text("risk_level").notNull().default("safe"),
+  interlocutorGender: text("interlocutor_gender").notNull().default("femme"),
   easeLevel: text("ease_level").notNull().default("beginner"),
   tuVous: text("tu_vous").notNull().default("tu"),
   formality: text("formality").notNull().default("casual"),
