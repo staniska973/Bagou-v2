@@ -8,6 +8,7 @@ import { insertUserProfileSchema, insertSessionEventSchema, interlocutorGenderEn
 import { z } from "zod";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { quotaGuard } from "./subscription";
+import { signVocalSession, verifyVocalSession } from "./sessionToken";
 
 declare module "express-session" {
   interface SessionData {
@@ -1086,19 +1087,31 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       ]);
       // Persona objective/tactics are hidden — keep server-side, never send to client.
       setPersona(personaKey(profileId ?? "anon", cardId, gender), persona);
-      res.json({ openingLine });
+      // Mint a signed token proving this metered session start; dialogue-turn
+      // requires it so the continuation can't be called without charging quota.
+      const sessionToken = signVocalSession({ userId: (req as any).user.claims.sub, cardId });
+      res.json({ openingLine, sessionToken });
     } catch (error) {
       console.error("Error generating opening line:", error);
       res.status(500).json({ error: "Failed to generate opening line" });
     }
   });
 
-  app.post("/api/session/dialogue-turn", async (req, res) => {
+  app.post("/api/session/dialogue-turn", isAuthenticated, async (req, res) => {
     try {
       const { profileId, cardId, history, userMessage, turnNumber, isProposalRewrite } = req.body;
 
       if (!profileId || !cardId || !userMessage) {
         return res.status(400).json({ error: "Missing required fields" });
+      }
+
+      // Bind the continuation to a metered session start. The token is minted by
+      // /api/session/opening, where the weekly vocal quota is charged. Without it
+      // an authenticated free user could call this endpoint directly and bypass
+      // the limit. HMAC-signed, so it survives a mid-session server restart.
+      const userId = (req as any).user.claims.sub as string;
+      if (!verifyVocalSession(req.body.sessionToken, { userId, cardId })) {
+        return res.status(403).json({ error: "Invalid or expired session" });
       }
 
       const profile = await storage.getProfile(profileId);

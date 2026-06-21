@@ -26,10 +26,10 @@ export interface EffectiveAccess {
  */
 async function getActiveStripeSubscription(
   customerId: string,
-): Promise<{ status: string; currentPeriodEnd: number | null } | null> {
+): Promise<{ status: string; currentPeriodEnd: number | null; trialEnd: number | null } | null> {
   try {
     const result = await db.execute(
-      sql`SELECT status, current_period_end
+      sql`SELECT status, current_period_end, trial_end
           FROM stripe.subscriptions
           WHERE customer = ${customerId}
             AND status IN ('active', 'trialing')
@@ -37,10 +37,14 @@ async function getActiveStripeSubscription(
           LIMIT 1`,
     );
     const row = result.rows[0] as
-      | { status: string; current_period_end: number | null }
+      | { status: string; current_period_end: number | null; trial_end: number | null }
       | undefined;
     if (!row) return null;
-    return { status: row.status, currentPeriodEnd: row.current_period_end ?? null };
+    return {
+      status: row.status,
+      currentPeriodEnd: row.current_period_end ?? null,
+      trialEnd: row.trial_end ?? null,
+    };
   } catch {
     // stripe schema not present / Stripe not connected yet.
     return null;
@@ -81,11 +85,13 @@ export async function getEffectiveAccess(userId: string): Promise<EffectiveAcces
       return { tier: "premium", source: "stripe", trialEndsAt: null, unlimited: true };
     }
     if (sub?.status === "trialing") {
+      // Prefer the explicit trial_end; fall back to current_period_end (which
+      // coincides with the trial end for a trialing subscription).
+      const endTs = sub.trialEnd ?? sub.currentPeriodEnd;
       return {
         tier: "trial",
         source: "stripe",
-        // For a trialing subscription the current period ends when the trial ends.
-        trialEndsAt: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd * 1000) : null,
+        trialEndsAt: endTs ? new Date(endTs * 1000) : null,
         unlimited: true,
       };
     }
@@ -123,10 +129,6 @@ export async function getDailyFlashcardCount(userId: string): Promise<number> {
 
 export async function getWeeklyVocalCount(userId: string): Promise<number> {
   return countUsage(userId, "vocal_session", sevenDaysAgo());
-}
-
-export async function recordUsage(userId: string, type: UsageType): Promise<void> {
-  await db.insert(usageEvents).values({ userId, type });
 }
 
 export interface SubscriptionStatus {
@@ -172,52 +174,109 @@ const QUOTA_MESSAGES: Record<UsageType, { code: string; message: string }> = {
   },
 };
 
+const QUOTA_UNAVAILABLE_MESSAGE =
+  "Service momentanément indisponible. Réessaie dans un instant.";
+
+/**
+ * Atomically reserves one quota slot for `userId`/`type` within the current
+ * window, returning the new usage-event id, or null if the limit is reached.
+ *
+ * A per-user/per-type transaction advisory lock serializes concurrent requests
+ * so parallel calls can't each pass a stale count and over-consume the quota.
+ */
+async function tryConsumeQuota(
+  userId: string,
+  type: UsageType,
+  since: Date,
+  limit: number,
+): Promise<number | null> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`quota:${userId}:${type}`}))`);
+    const countRes = await tx.execute(
+      sql`SELECT count(*)::int AS c
+          FROM usage_events
+          WHERE user_id = ${userId} AND type = ${type} AND created_at >= ${since}`,
+    );
+    const used = (countRes.rows[0] as { c: number } | undefined)?.c ?? 0;
+    if (used >= limit) return null;
+    const ins = await tx.execute(
+      sql`INSERT INTO usage_events (user_id, type) VALUES (${userId}, ${type}) RETURNING id`,
+    );
+    return (ins.rows[0] as { id: number }).id;
+  });
+}
+
+/** Releases a previously reserved quota slot (e.g. the guarded call failed). */
+async function releaseQuota(id: number): Promise<void> {
+  await db.delete(usageEvents).where(eq(usageEvents.id, id));
+}
+
 /**
  * Express middleware factory guarding an AI-consuming endpoint. Must run AFTER
- * `isAuthenticated`. Premium/trial users pass unlimited; free users are checked
- * against the daily-card / weekly-vocal quota and otherwise get a French 402.
- * A usage event is recorded once the response completes successfully (2xx).
+ * `isAuthenticated`. Premium/trial users pass unlimited; free users atomically
+ * consume one quota slot up front and otherwise get a French 402. The slot is
+ * rolled back if the guarded call doesn't complete successfully (non-2xx or the
+ * client disconnects), so a failed AI call never burns the user's quota.
+ *
+ * Fails closed (503) if the access tier or quota count can't be determined, so a
+ * quota-system error can't silently let free users bypass their limits.
  */
 export function quotaGuard(type: UsageType) {
   return async (req: Request & { user?: any }, res: Response, next: NextFunction) => {
-    try {
-      const userId = req.user?.claims?.sub as string | undefined;
-      if (!userId) {
-        return res.status(401).json({ error: "Authentication required" });
-      }
-
-      const access = await getEffectiveAccess(userId);
-
-      if (!access.unlimited) {
-        const used =
-          type === "flashcard"
-            ? await getDailyFlashcardCount(userId)
-            : await getWeeklyVocalCount(userId);
-        const limit = type === "flashcard" ? FREE_DAILY_CARDS : FREE_WEEKLY_VOCAL;
-        if (used >= limit) {
-          const { code, message } = QUOTA_MESSAGES[type];
-          return res.status(402).json({ error: "quota_exceeded", code, message });
-        }
-      }
-
-      // Record the action only once it succeeds, so a failed AI call doesn't
-      // consume the user's quota.
-      let recorded = false;
-      res.on("finish", () => {
-        if (recorded) return;
-        recorded = true;
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          recordUsage(userId, type).catch((err) =>
-            console.error("Failed to record usage event:", err),
-          );
-        }
-      });
-
-      next();
-    } catch (error) {
-      console.error("quotaGuard error:", error);
-      // Fail open so a quota-system hiccup never blocks paying users.
-      next();
+    const userId = req.user?.claims?.sub as string | undefined;
+    if (!userId) {
+      return res.status(401).json({ error: "Authentication required" });
     }
+
+    let unlimited: boolean;
+    try {
+      unlimited = (await getEffectiveAccess(userId)).unlimited;
+    } catch (error) {
+      console.error("quotaGuard access lookup failed:", error);
+      return res.status(503).json({ error: "quota_unavailable", message: QUOTA_UNAVAILABLE_MESSAGE });
+    }
+
+    if (unlimited) return next();
+
+    const limit = type === "flashcard" ? FREE_DAILY_CARDS : FREE_WEEKLY_VOCAL;
+    const since = type === "flashcard" ? startOfToday() : sevenDaysAgo();
+
+    let reservedId: number | null;
+    try {
+      reservedId = await tryConsumeQuota(userId, type, since, limit);
+    } catch (error) {
+      console.error("quotaGuard consume failed:", error);
+      return res.status(503).json({ error: "quota_unavailable", message: QUOTA_UNAVAILABLE_MESSAGE });
+    }
+
+    if (reservedId == null) {
+      const { code, message } = QUOTA_MESSAGES[type];
+      return res.status(402).json({ error: "quota_exceeded", code, message });
+    }
+
+    // Roll back the reserved slot unless the guarded call completed with a 2xx,
+    // so failed requests / client aborts don't consume the user's quota.
+    let settled = false;
+    const rollback = () => {
+      if (settled) return;
+      settled = true;
+      releaseQuota(reservedId!).catch((err) =>
+        console.error("Failed to release quota slot:", err),
+      );
+    };
+    res.on("finish", () => {
+      if (settled) return;
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        settled = true; // success: keep the reserved slot
+        return;
+      }
+      rollback();
+    });
+    res.on("close", () => {
+      // Client disconnected before the response finished -> treat as a failure.
+      if (!res.writableEnded) rollback();
+    });
+
+    next();
   };
 }

@@ -35,7 +35,11 @@ async function getStripeCredentials(): Promise<{ secretKey: string; webhookSecre
   const data = await resp.json();
   const settings = data.items?.[0]?.settings;
 
-  if (!settings?.secret_key) {
+  // The Replit Stripe connector exposes the API key as `secret` (not `secret_key`).
+  // There is no webhook secret here: webhooks are created/managed by
+  // stripe-replit-sync (findOrCreateManagedWebhook), which tracks the signing
+  // secret itself, so an empty stripeWebhookSecret is expected.
+  if (!settings?.secret) {
     throw new Error(
       'Stripe integration not connected or missing secret key. ' +
       'Connect Stripe via the Integrations tab first.'
@@ -43,7 +47,7 @@ async function getStripeCredentials(): Promise<{ secretKey: string; webhookSecre
   }
 
   return {
-    secretKey: settings.secret_key,
+    secretKey: settings.secret,
     webhookSecret: settings.webhook_secret,
   };
 }

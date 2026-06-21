@@ -74,6 +74,9 @@ export function VocalStep({
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  // Signed token from /opening proving this vocal session was metered; sent with
+  // every dialogue-turn so the continuation stays bound to the charged start.
+  const sessionTokenRef = useRef<string | null>(null);
   const historyRef = useRef<Msg[]>([]);
   const turnRef = useRef(1);
   const startTimeRef = useRef(0);
@@ -279,6 +282,7 @@ export function VocalStep({
           userMessage: text,
           turnNumber: turnToSend,
           interlocutorGender: gender,
+          sessionToken: sessionTokenRef.current,
         });
         const data = await res.json();
         if (cancelledRef.current) return;
@@ -404,7 +408,9 @@ export function VocalStep({
           profileId,
           interlocutorGender: gender,
         });
-        opening = (await r.json()).openingLine || "";
+        const od = await r.json();
+        opening = od.openingLine || "";
+        sessionTokenRef.current = od.sessionToken || null;
       } catch (err) {
         quotaBlocked = parseQuotaError(err);
       }

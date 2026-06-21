@@ -55,6 +55,8 @@ export function registerStripeRoutes(app: Express): void {
             WHERE p.active = true
               AND pr.active = true
               AND p.metadata->>'bagou_plan' = 'premium'
+              AND pr.currency = 'eur'
+              AND pr.recurring->>'interval' IN ('month', 'year')
             ORDER BY pr.unit_amount ASC`,
       );
       const plans = result.rows.map((r: any) => ({
@@ -78,6 +80,24 @@ export function registerStripeRoutes(app: Express): void {
       const { priceId } = req.body ?? {};
       if (!priceId || typeof priceId !== "string") {
         return res.status(400).json({ error: "priceId is required" });
+      }
+
+      // Only allow checking out an active Bagou Premium price from the synced
+      // stripe schema, so a caller can't pass an arbitrary price id.
+      const allowed = await db.execute(
+        sql`SELECT 1
+            FROM stripe.prices pr
+            JOIN stripe.products p ON p.id = pr.product
+            WHERE pr.id = ${priceId}
+              AND pr.active = true
+              AND p.active = true
+              AND p.metadata->>'bagou_plan' = 'premium'
+              AND pr.currency = 'eur'
+              AND pr.recurring->>'interval' IN ('month', 'year')
+            LIMIT 1`,
+      );
+      if (allowed.rows.length === 0) {
+        return res.status(400).json({ error: "Offre invalide." });
       }
 
       const userId = req.user.claims.sub;

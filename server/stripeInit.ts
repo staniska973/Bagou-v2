@@ -31,8 +31,15 @@ export async function initStripe(): Promise<void> {
   }
 
   console.log("Syncing Stripe data...");
-  stripeSync
-    .syncBackfill()
+  // syncBackfill() does NOT cover products/prices, so sync those explicitly --
+  // /api/stripe/plans reads them from the stripe schema. Run the full backfill
+  // (customers, subscriptions, etc.) afterwards. Fire-and-forget so a slow or
+  // failing sync never blocks server startup.
+  (async () => {
+    await stripeSync.syncProducts();
+    await stripeSync.syncPrices();
+    await stripeSync.syncBackfill();
+  })()
     .then(() => console.log("Stripe data synced"))
     .catch((err) => console.error("Error syncing Stripe data:", err));
 }
