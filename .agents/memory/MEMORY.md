@@ -9,3 +9,4 @@
 - [Stripe (Replit connector + sync)](stripe-replit-sync.md) — connector key is `settings.secret` (not secret_key); no webhook_secret (managed webhooks); `syncBackfill()` skips products/prices — call `syncProducts()`+`syncPrices()` explicitly.
 - [AI usage quota enforcement](quota-enforcement.md) — metering points; dialogue-turn gated by signed session token from /opening; atomic reserve+rollback+fail-closed guard; EUR/recurring checkout price allowlist.
 - [Object storage on Express 5](object-storage-express5.md) — the blueprint's `/objects/:objectPath(*)` route crashes under Express 5 path-to-regexp v8; use named wildcard `/objects/*objectPath`. Avatars: customImageUrl overrides OAuth profileImageUrl.
+- [Admin panel two-layer auth (testing)](admin-panel-two-layer-auth.md) — /admin is behind Replit OAuth AND a separate admin session; runTest needs testReplitAuth OAuth login first, then the admin form login.
