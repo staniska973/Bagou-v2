@@ -9,6 +9,7 @@ import { z } from "zod";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { quotaGuard } from "./subscription";
 import { startVocalSession, claimVocalTurn, closeVocalSession } from "./vocalSession";
+import { listClients, getClientDetail, getKpis } from "./adminAnalytics";
 
 declare module "express-session" {
   interface SessionData {
@@ -1062,6 +1063,140 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     } catch (error) {
       console.error("Error fetching admin stats:", error);
       res.status(500).json({ error: "Failed to fetch stats" });
+    }
+  });
+
+  // ── Client console (reporting layer over app tables + read-only stripe schema) ──
+
+  app.get("/api/admin/clients", isAdminSession, async (_req: any, res) => {
+    try {
+      const clients = await listClients();
+      res.json(clients);
+    } catch (error) {
+      console.error("Error fetching clients:", error);
+      res.status(500).json({ error: "Failed to fetch clients" });
+    }
+  });
+
+  app.get("/api/admin/kpis", isAdminSession, async (_req: any, res) => {
+    try {
+      const kpis = await getKpis();
+      res.json(kpis);
+    } catch (error) {
+      console.error("Error fetching kpis:", error);
+      res.status(500).json({ error: "Failed to fetch kpis" });
+    }
+  });
+
+  app.get("/api/admin/clients/:id", isAdminSession, async (req: any, res) => {
+    try {
+      const detail = await getClientDetail(req.params.id);
+      if (!detail) {
+        res.status(404).json({ error: "Client not found" });
+        return;
+      }
+      res.json(detail);
+    } catch (error) {
+      console.error("Error fetching client detail:", error);
+      res.status(500).json({ error: "Failed to fetch client detail" });
+    }
+  });
+
+  const optionalDateString = z
+    .string()
+    .trim()
+    .min(1)
+    .refine((v) => !Number.isNaN(Date.parse(v)), { message: "Date invalide" });
+
+  const grantPremiumSchema = z.object({
+    expiresAt: optionalDateString.nullish(),
+  });
+
+  const extendTrialSchema = z
+    .object({
+      days: z.number().int().positive().max(365).optional(),
+      expiresAt: optionalDateString.optional(),
+    })
+    .refine((v) => v.days !== undefined || v.expiresAt !== undefined, {
+      message: "Indiquez une durée ou une date d'expiration",
+    });
+
+  async function setOverride(
+    userId: string,
+    subscriptionStatus: string,
+    subscriptionExpiresAt: Date | null,
+  ) {
+    const { db: dbModule } = await import("./db");
+    const { users } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const [updated] = await dbModule
+      .update(users)
+      .set({ subscriptionStatus, subscriptionExpiresAt })
+      .where(eq(users.id, userId))
+      .returning();
+    return updated;
+  }
+
+  // Grant complimentary Premium (manual override, NOT a Stripe charge).
+  app.post("/api/admin/users/:id/grant-premium", isAdminSession, async (req: any, res) => {
+    try {
+      const parsed = grantPremiumSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Requête invalide" });
+        return;
+      }
+      const expiresAt = parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null;
+      const updated = await setOverride(req.params.id, "active", expiresAt);
+      if (!updated) {
+        res.status(404).json({ error: "Client not found" });
+        return;
+      }
+      res.json(updated);
+    } catch (error) {
+      console.error("Error granting premium:", error);
+      res.status(500).json({ error: "Failed to grant premium" });
+    }
+  });
+
+  // Revoke a manual override, returning the user to their Stripe/free state.
+  app.post("/api/admin/users/:id/revoke-premium", isAdminSession, async (req: any, res) => {
+    try {
+      const updated = await setOverride(req.params.id, "none", null);
+      if (!updated) {
+        res.status(404).json({ error: "Client not found" });
+        return;
+      }
+      res.json(updated);
+    } catch (error) {
+      console.error("Error revoking premium:", error);
+      res.status(500).json({ error: "Failed to revoke premium" });
+    }
+  });
+
+  // Grant / extend a complimentary trial via manual override.
+  app.post("/api/admin/users/:id/extend-trial", isAdminSession, async (req: any, res) => {
+    try {
+      const parsed = extendTrialSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Requête invalide" });
+        return;
+      }
+      let expiresAt: Date;
+      if (parsed.data.expiresAt) {
+        expiresAt = new Date(parsed.data.expiresAt);
+      } else {
+        expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + (parsed.data.days ?? 7));
+      }
+      const updated = await setOverride(req.params.id, "trial", expiresAt);
+      if (!updated) {
+        res.status(404).json({ error: "Client not found" });
+        return;
+      }
+      res.json(updated);
+    } catch (error) {
+      console.error("Error extending trial:", error);
+      res.status(500).json({ error: "Failed to extend trial" });
     }
   });
 

@@ -17,6 +17,17 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -69,11 +80,15 @@ import {
   AlertCircle,
   ChevronRight,
   Layers,
+  Gift,
+  Clock,
+  History,
+  Infinity as InfinityIcon,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import type { MotherCard, User } from "@shared/schema";
 
-type Section = "overview" | "users" | "subscriptions" | "ai" | "cards" | "generate";
+type Section = "overview" | "clients" | "ai" | "cards" | "generate";
 
 interface ThemeConfig {
   id: string;
@@ -98,6 +113,72 @@ interface AdminSettings {
   tts_model: string;
   tts_voice: string;
   response_timer_seconds: number;
+}
+
+type ClientTier = "free" | "trial" | "premium";
+type ClientSource = "none" | "admin" | "stripe";
+
+interface AdminClient {
+  id: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  isAdmin: boolean;
+  createdAt: string | null;
+  tier: ClientTier;
+  source: ClientSource;
+  planLabel: string;
+  interval: "month" | "year" | null;
+  renewalOrTrialEnd: string | null;
+  overrideStatus: string;
+  overrideExpiresAt: string | null;
+  activity: { cards: number; vocal: number; sessions: number; lastActiveAt: string | null };
+}
+
+interface AdminClientKpis {
+  totalUsers: number;
+  activeSubscribers: number;
+  trials: number;
+  freeUsers: number;
+  compOverrides: number;
+  premiumMonthly: number;
+  premiumYearly: number;
+  mrrCents: number;
+}
+
+interface SubscriptionHistoryEntry {
+  id: string;
+  status: string;
+  interval: "month" | "year" | null;
+  unitAmount: number | null;
+  currency: string | null;
+  created: string | null;
+  currentPeriodEnd: string | null;
+  trialEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  canceledAt: string | null;
+  endedAt: string | null;
+  productName: string | null;
+}
+
+interface UsageDayPoint {
+  day: string;
+  cards: number;
+  vocal: number;
+}
+
+interface ClientDetail {
+  client: AdminClient;
+  usageByDay: UsageDayPoint[];
+  subscriptionHistory: SubscriptionHistoryEntry[];
+}
+
+const eurFormatter = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
+function formatEur(cents: number | null | undefined): string {
+  return eurFormatter.format((cents ?? 0) / 100);
+}
+function formatDate(value: string | null | undefined): string {
+  return value ? new Date(value).toLocaleDateString("fr-FR") : "—";
 }
 
 export default function Admin() {
@@ -210,8 +291,7 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
 
 const NAV_ITEMS: { id: Section; label: string; icon: React.ReactNode }[] = [
   { id: "overview", label: "Vue d'ensemble", icon: <LayoutDashboard className="w-5 h-5" /> },
-  { id: "users", label: "Utilisateurs", icon: <Users className="w-5 h-5" /> },
-  { id: "subscriptions", label: "Abonnements", icon: <CreditCard className="w-5 h-5" /> },
+  { id: "clients", label: "Clients", icon: <Users className="w-5 h-5" /> },
   { id: "ai", label: "Modèle IA", icon: <Brain className="w-5 h-5" /> },
   { id: "cards", label: "Cartes", icon: <Library className="w-5 h-5" /> },
   { id: "generate", label: "Générer", icon: <Sparkles className="w-5 h-5" /> },
@@ -231,8 +311,7 @@ function AdminDashboard() {
 
   const SECTION_TITLES: Record<Section, string> = {
     overview: "Vue d'ensemble",
-    users: "Utilisateurs",
-    subscriptions: "Abonnements",
+    clients: "Clients",
     ai: "Modèle IA & Voix",
     cards: "Cartes",
     generate: "Générer des cartes",
@@ -330,8 +409,7 @@ function AdminDashboard() {
         <main className="flex-1 overflow-y-auto p-6">
           <div className="max-w-5xl mx-auto">
             {activeSection === "overview" && <OverviewSection />}
-            {activeSection === "users" && <UsersSection />}
-            {activeSection === "subscriptions" && <SubscriptionsSection />}
+            {activeSection === "clients" && <ClientsSection />}
             {activeSection === "ai" && <AISettingsSection />}
             {activeSection === "cards" && <CardsSection />}
             {activeSection === "generate" && <GenerateSection />}
@@ -390,6 +468,7 @@ function OverviewSection() {
   const { data: stats, isLoading: statsLoading } = useQuery<AdminStats>({
     queryKey: ["/api/admin/stats"],
   });
+  const { data: kpis } = useQuery<AdminClientKpis>({ queryKey: ["/api/admin/kpis"] });
 
   const { data: themes } = useQuery<ThemeConfig[]>({ queryKey: ["/api/admin/themes"] });
   const { data: allCards } = useQuery<MotherCard[]>({ queryKey: ["/api/mother-cards"] });
@@ -401,15 +480,13 @@ function OverviewSection() {
       }, {})
     : {};
 
-  const totalSubs = stats
-    ? (stats.subscriptions.active + stats.subscriptions.trial + stats.subscriptions.none + stats.subscriptions.expired)
-    : 1;
+  const totalSubs = kpis ? Math.max(kpis.totalUsers, 1) : 1;
 
-  const subBreakdown = stats ? [
-    { label: "Premium", count: stats.subscriptions.active, color: "#10b981", pct: Math.round(stats.subscriptions.active / totalSubs * 100) },
-    { label: "Essai", count: stats.subscriptions.trial, color: "#3b82f6", pct: Math.round(stats.subscriptions.trial / totalSubs * 100) },
-    { label: "Gratuit", count: stats.subscriptions.none, color: "#94a3b8", pct: Math.round(stats.subscriptions.none / totalSubs * 100) },
-    { label: "Expiré", count: stats.subscriptions.expired, color: "#f87171", pct: Math.round(stats.subscriptions.expired / totalSubs * 100) },
+  const subBreakdown = kpis ? [
+    { label: "Payant", count: kpis.activeSubscribers, color: "#10b981", pct: Math.round(kpis.activeSubscribers / totalSubs * 100) },
+    { label: "Offert", count: kpis.compOverrides, color: "#8b5cf6", pct: Math.round(kpis.compOverrides / totalSubs * 100) },
+    { label: "Essai", count: kpis.trials, color: "#3b82f6", pct: Math.round(kpis.trials / totalSubs * 100) },
+    { label: "Gratuit", count: kpis.freeUsers, color: "#94a3b8", pct: Math.round(kpis.freeUsers / totalSubs * 100) },
   ] : [];
 
   return (
@@ -428,8 +505,8 @@ function OverviewSection() {
             />
             <StatCard
               title="Abonnés actifs"
-              value={stats?.subscriptions.active ?? 0}
-              sub={`${stats?.subscriptions.trial ?? 0} en essai`}
+              value={kpis?.activeSubscribers ?? 0}
+              sub={`${kpis?.trials ?? 0} essai · MRR ${formatEur(kpis?.mrrCents)}`}
               icon={<Crown className="w-5 h-5 text-emerald-600" />}
               color="bg-emerald-500/10"
             />
@@ -460,7 +537,7 @@ function OverviewSection() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {statsLoading ? (
+            {!kpis ? (
               <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-8" />)}</div>
             ) : (
               subBreakdown.map((item) => (
@@ -545,88 +622,275 @@ function OverviewSection() {
   );
 }
 
-function UsersSection() {
-  const [search, setSearch] = useState("");
-  const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [subForm, setSubForm] = useState({ subscriptionStatus: "none", subscriptionExpiresAt: "" });
-  const [confirmDelete, setConfirmDelete] = useState<User | null>(null);
+function ClientPlanBadge({ client }: { client: AdminClient }) {
+  const { tier, source, planLabel } = client;
+  let className = "bg-gray-500/15 text-gray-600 dark:text-gray-400 border-gray-500/30";
+  let icon: React.ReactNode = null;
+  if (tier === "premium" && source === "stripe") {
+    className = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30";
+    icon = <Crown className="w-3 h-3 mr-1" />;
+  } else if (tier === "premium" && source === "admin") {
+    className = "bg-violet-500/15 text-violet-700 dark:text-violet-400 border-violet-500/50 border-dashed";
+    icon = <Gift className="w-3 h-3 mr-1" />;
+  } else if (tier === "trial" && source === "admin") {
+    className = "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/50 border-dashed";
+    icon = <Gift className="w-3 h-3 mr-1" />;
+  } else if (tier === "trial") {
+    className = "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30";
+    icon = <Calendar className="w-3 h-3 mr-1" />;
+  }
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium border ${className}`}
+      data-testid={`badge-plan-${client.id}`}
+    >
+      {icon}
+      {planLabel}
+    </span>
+  );
+}
+
+function echeanceLabel(client: AdminClient): { label: string; value: React.ReactNode } {
+  if (client.tier === "premium" && client.source === "admin") {
+    return {
+      label: "Offert",
+      value: client.renewalOrTrialEnd ? (
+        `jusqu'au ${formatDate(client.renewalOrTrialEnd)}`
+      ) : (
+        <span className="inline-flex items-center gap-1"><InfinityIcon className="w-3.5 h-3.5" />permanent</span>
+      ),
+    };
+  }
+  if (client.tier === "premium") return { label: "Renouvellement", value: formatDate(client.renewalOrTrialEnd) };
+  if (client.tier === "trial") return { label: "Fin d'essai", value: formatDate(client.renewalOrTrialEnd) };
+  return { label: "", value: "—" };
+}
+
+const STRIPE_STATUS_FR: Record<string, { label: string; className: string }> = {
+  active: { label: "Actif", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" },
+  trialing: { label: "Essai", className: "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30" },
+  past_due: { label: "Impayé", className: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30" },
+  canceled: { label: "Annulé", className: "bg-gray-500/15 text-gray-600 dark:text-gray-400 border-gray-500/30" },
+  incomplete: { label: "Incomplet", className: "bg-gray-500/15 text-gray-600 dark:text-gray-400 border-gray-500/30" },
+  incomplete_expired: { label: "Expiré", className: "bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30" },
+  unpaid: { label: "Non payé", className: "bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30" },
+};
+
+function StripeStatusTag({ status }: { status: string }) {
+  const s = STRIPE_STATUS_FR[status] || { label: status, className: "bg-gray-500/15 text-gray-600 border-gray-500/30" };
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium border ${s.className}`}>
+      {s.label}
+    </span>
+  );
+}
+
+function UsageBars({ data }: { data: UsageDayPoint[] }) {
+  if (!data.length) {
+    return <p className="text-sm text-muted-foreground py-4 text-center">Aucune activité sur les 30 derniers jours.</p>;
+  }
+  const max = Math.max(...data.map((d) => d.cards + d.vocal), 1);
+  return (
+    <div>
+      <div className="flex items-end gap-1 h-24">
+        {data.map((d) => (
+          <div
+            key={d.day}
+            className="flex-1 flex flex-col justify-end items-center min-w-[3px]"
+            title={`${formatDate(d.day)} — ${d.cards} carte(s), ${d.vocal} vocal`}
+            data-testid={`bar-usage-${d.day}`}
+          >
+            <div className="w-full rounded-t-sm bg-blue-500/70" style={{ height: `${(d.vocal / max) * 100}%` }} />
+            <div className="w-full rounded-b-sm bg-emerald-500/70" style={{ height: `${(d.cards / max) * 100}%` }} />
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/70" />Cartes</span>
+        <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500/70" />Vocal</span>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmAction({
+  trigger, title, description, confirmLabel, onConfirm, destructive, testId,
+}: {
+  trigger: React.ReactNode;
+  title: string;
+  description: React.ReactNode;
+  confirmLabel: string;
+  onConfirm: () => void;
+  destructive?: boolean;
+  testId?: string;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel data-testid="button-cancel-action">Annuler</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={onConfirm}
+            className={destructive ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""}
+            data-testid={testId}
+          >
+            {confirmLabel}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function ClientActivityInline({ activity }: { activity: AdminClient["activity"] }) {
+  return (
+    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+      <span className="inline-flex items-center gap-1" title="Cartes travaillées"><Library className="w-3.5 h-3.5" />{activity.cards}</span>
+      <span className="inline-flex items-center gap-1" title="Sessions vocales"><Volume2 className="w-3.5 h-3.5" />{activity.vocal}</span>
+      <span className="inline-flex items-center gap-1" title="Sessions"><MessageCircle className="w-3.5 h-3.5" />{activity.sessions}</span>
+    </div>
+  );
+}
+
+function ClientsSection() {
   const { toast } = useToast();
+  const [search, setSearch] = useState("");
+  const [tierFilter, setTierFilter] = useState<"all" | "premium" | "comp" | "trial" | "free">("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [grantExpiry, setGrantExpiry] = useState("");
+  const [trialDays, setTrialDays] = useState("14");
 
-  const { data: users, isLoading } = useQuery<User[]>({ queryKey: ["/api/admin/users"] });
-
-  const updateSubscription = useMutation({
-    mutationFn: async ({ userId, data }: { userId: string; data: any }) => {
-      const res = await apiRequest("PATCH", `/api/admin/users/${userId}/subscription`, data);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/stats"] });
-      setEditingUser(null);
-      toast({ title: "Abonnement mis à jour" });
-    },
-    onError: (error: Error) => toast({ title: "Erreur", description: error.message, variant: "destructive" }),
+  const { data: clients, isLoading } = useQuery<AdminClient[]>({ queryKey: ["/api/admin/clients"] });
+  const { data: kpis } = useQuery<AdminClientKpis>({ queryKey: ["/api/admin/kpis"] });
+  const { data: detail, isLoading: detailLoading } = useQuery<ClientDetail>({
+    queryKey: ["/api/admin/clients", selectedId],
+    enabled: !!selectedId,
   });
 
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/clients"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/kpis"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/stats"] });
+  };
+  const onErr = (error: Error) => toast({ title: "Erreur", description: error.message, variant: "destructive" });
+
+  const grantPremium = useMutation({
+    mutationFn: async ({ userId, expiresAt }: { userId: string; expiresAt: string | null }) => {
+      const res = await apiRequest("POST", `/api/admin/users/${userId}/grant-premium`, { expiresAt });
+      return res.json();
+    },
+    onSuccess: () => { invalidateAll(); setGrantExpiry(""); toast({ title: "Accès Premium offert" }); },
+    onError: onErr,
+  });
+  const revokePremium = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await apiRequest("POST", `/api/admin/users/${userId}/revoke-premium`);
+      return res.json();
+    },
+    onSuccess: () => { invalidateAll(); toast({ title: "Accès offert révoqué" }); },
+    onError: onErr,
+  });
+  const extendTrial = useMutation({
+    mutationFn: async ({ userId, days }: { userId: string; days: number }) => {
+      const res = await apiRequest("POST", `/api/admin/users/${userId}/extend-trial`, { days });
+      return res.json();
+    },
+    onSuccess: () => { invalidateAll(); toast({ title: "Essai accordé" }); },
+    onError: onErr,
+  });
   const toggleAdmin = useMutation({
     mutationFn: async ({ userId, isAdmin }: { userId: string; isAdmin: boolean }) => {
       const res = await apiRequest("PATCH", `/api/admin/users/${userId}/admin`, { isAdmin });
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      toast({ title: "Statut admin modifié" });
-    },
-    onError: (error: Error) => toast({ title: "Erreur", description: error.message, variant: "destructive" }),
+    onSuccess: () => { invalidateAll(); toast({ title: "Rôle administrateur modifié" }); },
+    onError: onErr,
+  });
+  const deleteClient = useMutation({
+    mutationFn: async (userId: string) => { await apiRequest("DELETE", `/api/admin/users/${userId}`); },
+    onSuccess: () => { invalidateAll(); setSelectedId(null); toast({ title: "Client supprimé" }); },
+    onError: onErr,
   });
 
-  const deleteUser = useMutation({
-    mutationFn: async (userId: string) => {
-      await apiRequest("DELETE", `/api/admin/users/${userId}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/stats"] });
-      setConfirmDelete(null);
-      toast({ title: "Utilisateur supprimé" });
-    },
-    onError: (error: Error) => toast({ title: "Erreur", description: error.message, variant: "destructive" }),
+  const filtered = clients?.filter((c) => {
+    const q = search.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      `${c.firstName ?? ""} ${c.lastName ?? ""}`.toLowerCase().includes(q) ||
+      (c.email ?? "").toLowerCase().includes(q);
+    let matchesTier = true;
+    if (tierFilter === "premium") matchesTier = c.tier === "premium" && c.source === "stripe";
+    else if (tierFilter === "comp") matchesTier = c.tier === "premium" && c.source === "admin";
+    else if (tierFilter === "trial") matchesTier = c.tier === "trial";
+    else if (tierFilter === "free") matchesTier = c.tier === "free";
+    return matchesSearch && matchesTier;
   });
 
-  const filtered = users?.filter((u) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) ||
-      (u.email || "").toLowerCase().includes(q)
-    );
-  });
-
-  const openEditModal = (user: User) => {
-    setEditingUser(user);
-    setSubForm({
-      subscriptionStatus: (user as any).subscriptionStatus || "none",
-      subscriptionExpiresAt: (user as any).subscriptionExpiresAt
-        ? new Date((user as any).subscriptionExpiresAt).toISOString().split("T")[0]
-        : "",
-    });
-  };
+  const client = detail?.client;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          title="Revenu mensuel (MRR)"
+          value={formatEur(kpis?.mrrCents)}
+          sub="récurrent, hors offerts"
+          icon={<CreditCard className="w-5 h-5 text-emerald-600" />}
+          color="bg-emerald-500/10"
+        />
+        <StatCard
+          title="Abonnés actifs"
+          value={kpis?.activeSubscribers ?? 0}
+          sub={`${kpis?.premiumMonthly ?? 0} mensuel · ${kpis?.premiumYearly ?? 0} annuel`}
+          icon={<Crown className="w-5 h-5 text-amber-600" />}
+          color="bg-amber-500/10"
+        />
+        <StatCard
+          title="Essais en cours"
+          value={kpis?.trials ?? 0}
+          sub={`${kpis?.compOverrides ?? 0} Premium offert(s)`}
+          icon={<Calendar className="w-5 h-5 text-blue-600" />}
+          color="bg-blue-500/10"
+        />
+        <StatCard
+          title="Utilisateurs gratuits"
+          value={kpis?.freeUsers ?? 0}
+          sub={`${kpis?.totalUsers ?? 0} clients au total`}
+          icon={<Users className="w-5 h-5 text-slate-600" />}
+          color="bg-slate-500/10"
+        />
+      </div>
+
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Rechercher un utilisateur..."
+            placeholder="Rechercher par nom ou email..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
-            data-testid="input-search-users"
+            data-testid="input-search-clients"
           />
         </div>
-        <Badge variant="secondary" className="text-xs">
-          {filtered?.length ?? 0} utilisateur{(filtered?.length ?? 0) > 1 ? "s" : ""}
+        <Select value={tierFilter} onValueChange={(v) => setTierFilter(v as typeof tierFilter)}>
+          <SelectTrigger className="w-full sm:w-52" data-testid="select-tier-filter">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Toutes les offres</SelectItem>
+            <SelectItem value="premium">Premium payant</SelectItem>
+            <SelectItem value="comp">Premium offert</SelectItem>
+            <SelectItem value="trial">En essai</SelectItem>
+            <SelectItem value="free">Gratuit</SelectItem>
+          </SelectContent>
+        </Select>
+        <Badge variant="secondary" className="text-xs whitespace-nowrap" data-testid="text-client-count">
+          {filtered?.length ?? 0} client{(filtered?.length ?? 0) > 1 ? "s" : ""}
         </Badge>
       </div>
 
@@ -638,81 +902,66 @@ function UsersSection() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/30">
-                  <TableHead className="w-[240px]">Utilisateur</TableHead>
-                  <TableHead>Abonnement</TableHead>
-                  <TableHead className="hidden md:table-cell">Inscrit le</TableHead>
-                  <TableHead className="hidden lg:table-cell">Rôle</TableHead>
-                  <TableHead className="w-[100px]"></TableHead>
+                  <TableHead className="w-[230px]">Client</TableHead>
+                  <TableHead>Offre</TableHead>
+                  <TableHead className="hidden md:table-cell">Échéance</TableHead>
+                  <TableHead className="hidden lg:table-cell">Activité</TableHead>
+                  <TableHead className="hidden sm:table-cell">Inscrit le</TableHead>
+                  <TableHead className="w-[40px]"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered && filtered.length > 0 ? (
-                  filtered.map((u) => (
-                    <TableRow key={u.id} data-testid={`row-user-${u.id}`}>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#1B2A4A15" }}>
-                            <span className="text-xs font-bold" style={{ color: "#1B2A4A" }}>
-                              {(u.firstName || "?").charAt(0).toUpperCase()}
-                            </span>
+                  filtered.map((c) => {
+                    const ech = echeanceLabel(c);
+                    return (
+                      <TableRow
+                        key={c.id}
+                        className="cursor-pointer hover:bg-muted/40"
+                        onClick={() => setSelectedId(c.id)}
+                        data-testid={`row-client-${c.id}`}
+                      >
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#1B2A4A15" }}>
+                              <span className="text-xs font-bold" style={{ color: "#1B2A4A" }}>
+                                {(c.firstName || c.email || "?").charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate flex items-center gap-1.5">
+                                {`${c.firstName ?? ""} ${c.lastName ?? ""}`.trim() || "Anonyme"}
+                                {c.isAdmin && <Shield className="w-3 h-3 text-amber-600 flex-shrink-0" />}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate">{c.email || "—"}</p>
+                            </div>
                           </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium truncate">
-                              {u.firstName} {u.lastName}
-                            </p>
-                            <p className="text-xs text-muted-foreground truncate">{u.email || "—"}</p>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <SubBadge status={(u as any).subscriptionStatus || "none"} />
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                        {u.createdAt ? new Date(u.createdAt).toLocaleDateString("fr-FR") : "—"}
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        {u.isAdmin ? (
-                          <Badge className="text-[11px] bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
-                            <Shield className="w-3 h-3 mr-1" />Admin
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">Utilisateur</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost" size="icon"
-                            onClick={() => openEditModal(u)}
-                            data-testid={`button-edit-user-${u.id}`}
-                            title="Modifier l'abonnement"
-                          >
-                            <CreditCard className="w-4 h-4 text-muted-foreground" />
-                          </Button>
-                          <Button
-                            variant="ghost" size="icon"
-                            onClick={() => toggleAdmin.mutate({ userId: u.id, isAdmin: !u.isAdmin })}
-                            data-testid={`button-toggle-admin-${u.id}`}
-                            title={u.isAdmin ? "Retirer le rôle admin" : "Passer en admin"}
-                          >
-                            <Shield className="w-4 h-4 text-muted-foreground" />
-                          </Button>
-                          <Button
-                            variant="ghost" size="icon"
-                            onClick={() => setConfirmDelete(u)}
-                            data-testid={`button-delete-user-${u.id}`}
-                            title="Supprimer l'utilisateur"
-                          >
-                            <Trash2 className="w-4 h-4 text-red-400" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                        </TableCell>
+                        <TableCell><ClientPlanBadge client={c} /></TableCell>
+                        <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                          {ech.label ? (
+                            <div>
+                              <span className="text-[11px] uppercase tracking-wide text-muted-foreground/70">{ech.label}</span>
+                              <p className="text-sm text-foreground">{ech.value}</p>
+                            </div>
+                          ) : "—"}
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell">
+                          <ClientActivityInline activity={c.activity} />
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
+                          {formatDate(c.createdAt)}
+                        </TableCell>
+                        <TableCell>
+                          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
-                      {search ? "Aucun résultat pour cette recherche" : "Aucun utilisateur inscrit"}
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
+                      {search || tierFilter !== "all" ? "Aucun client ne correspond à ces critères" : "Aucun client"}
                     </TableCell>
                   </TableRow>
                 )}
@@ -722,327 +971,210 @@ function UsersSection() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Abonnement — {editingUser?.firstName} {editingUser?.lastName}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label>Statut</Label>
-              <Select
-                value={subForm.subscriptionStatus}
-                onValueChange={(val) => setSubForm((f) => ({ ...f, subscriptionStatus: val }))}
-              >
-                <SelectTrigger data-testid="select-sub-status">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Gratuit (aucun)</SelectItem>
-                  <SelectItem value="trial">Essai gratuit</SelectItem>
-                  <SelectItem value="active">Premium (actif)</SelectItem>
-                  <SelectItem value="expired">Expiré</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="sub-expires">Date d'expiration (optionnel)</Label>
-              <Input
-                id="sub-expires"
-                type="date"
-                value={subForm.subscriptionExpiresAt}
-                onChange={(e) => setSubForm((f) => ({ ...f, subscriptionExpiresAt: e.target.value }))}
-                data-testid="input-sub-expires"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingUser(null)}>Annuler</Button>
-            <Button
-              onClick={() => editingUser && updateSubscription.mutate({ userId: editingUser.id, data: subForm })}
-              disabled={updateSubscription.isPending}
-              data-testid="button-save-subscription"
-            >
-              {updateSubscription.isPending ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-              Enregistrer
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!confirmDelete} onOpenChange={(open) => !open && setConfirmDelete(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
-              <AlertCircle className="w-5 h-5" />
-              Supprimer l'utilisateur ?
-            </DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground py-2">
-            Cette action est irréversible. L'utilisateur <strong>{confirmDelete?.firstName} {confirmDelete?.lastName}</strong> et toutes ses données seront supprimés.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDelete(null)}>Annuler</Button>
-            <Button
-              variant="destructive"
-              onClick={() => confirmDelete && deleteUser.mutate(confirmDelete.id)}
-              disabled={deleteUser.isPending}
-              data-testid="button-confirm-delete-user"
-            >
-              {deleteUser.isPending ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-              Supprimer définitivement
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-const PLANS = [
-  {
-    id: "none",
-    name: "Gratuit",
-    color: "#94a3b8",
-    bgColor: "bg-slate-50 dark:bg-slate-900",
-    borderColor: "border-slate-200 dark:border-slate-700",
-    features: ["5 dialogues par jour", "Thèmes de base (SOCIAL, PRO)", "Mode texte uniquement", "SRS basique"],
-    icon: <MessageCircle className="w-5 h-5" />,
-  },
-  {
-    id: "trial",
-    name: "Essai",
-    color: "#3b82f6",
-    bgColor: "bg-blue-50 dark:bg-blue-950/30",
-    borderColor: "border-blue-200 dark:border-blue-800",
-    features: ["14 jours d'accès complet", "Tous les thèmes", "Mode voix inclus", "Toutes les fonctionnalités"],
-    icon: <Calendar className="w-5 h-5" />,
-    badge: "14 jours",
-  },
-  {
-    id: "active",
-    name: "Premium",
-    color: "#10b981",
-    bgColor: "bg-emerald-50 dark:bg-emerald-950/30",
-    borderColor: "border-emerald-200 dark:border-emerald-800",
-    features: ["Dialogues illimités", "Tous les thèmes + exclusifs", "Voix IA haute qualité", "Analyse avancée & rapports"],
-    icon: <Crown className="w-5 h-5" />,
-    badge: "Recommandé",
-    highlight: true,
-  },
-];
-
-function SubscriptionsSection() {
-  const { data: stats, isLoading: statsLoading } = useQuery<AdminStats>({
-    queryKey: ["/api/admin/stats"],
-  });
-  const { data: users, isLoading: usersLoading } = useQuery<User[]>({ queryKey: ["/api/admin/users"] });
-  const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [subForm, setSubForm] = useState({ subscriptionStatus: "none", subscriptionExpiresAt: "" });
-  const { toast } = useToast();
-
-  const updateSubscription = useMutation({
-    mutationFn: async ({ userId, data }: { userId: string; data: any }) => {
-      const res = await apiRequest("PATCH", `/api/admin/users/${userId}/subscription`, data);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/stats"] });
-      setEditingUser(null);
-      toast({ title: "Abonnement mis à jour" });
-    },
-    onError: (error: Error) => toast({ title: "Erreur", description: error.message, variant: "destructive" }),
-  });
-
-  const openEditModal = (user: User) => {
-    setEditingUser(user);
-    setSubForm({
-      subscriptionStatus: (user as any).subscriptionStatus || "none",
-      subscriptionExpiresAt: (user as any).subscriptionExpiresAt
-        ? new Date((user as any).subscriptionExpiresAt).toISOString().split("T")[0]
-        : "",
-    });
-  };
-
-  const totalSubs = stats ? (stats.subscriptions.active + stats.subscriptions.trial + stats.subscriptions.none + stats.subscriptions.expired) : 0;
-
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {PLANS.map((plan) => (
-          <div
-            key={plan.id}
-            className={`relative rounded-xl border-2 p-5 ${plan.bgColor} ${plan.highlight ? "border-emerald-400 dark:border-emerald-600" : plan.borderColor}`}
-          >
-            {plan.badge && (
-              <span
-                className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
-                style={{ backgroundColor: plan.color }}
-              >
-                {plan.badge}
-              </span>
-            )}
-            <div className="flex items-center gap-2 mb-3">
-              <span style={{ color: plan.color }}>{plan.icon}</span>
-              <h3 className="font-bold text-base">{plan.name}</h3>
-              {!statsLoading && (
-                <Badge variant="secondary" className="ml-auto text-xs">
-                  {stats?.subscriptions[plan.id as keyof typeof stats.subscriptions] ?? 0} utilisateurs
-                </Badge>
-              )}
-            </div>
-            <ul className="space-y-1.5">
-              {plan.features.map((f, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm">
-                  <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: plan.color }} />
-                  <span className="text-muted-foreground">{f}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {statsLoading ? (
-          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)
-        ) : (
-          [
-            { label: "Gratuit", count: stats?.subscriptions.none ?? 0, color: "#94a3b8" },
-            { label: "Essai", count: stats?.subscriptions.trial ?? 0, color: "#3b82f6" },
-            { label: "Premium", count: stats?.subscriptions.active ?? 0, color: "#10b981" },
-            { label: "Expiré", count: stats?.subscriptions.expired ?? 0, color: "#f87171" },
-          ].map((item) => (
-            <Card key={item.label} className="border">
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold" style={{ color: item.color }}>{item.count}</div>
-                <div className="text-xs text-muted-foreground mt-1">{item.label}</div>
-                <div className="text-xs text-muted-foreground">
-                  {totalSubs > 0 ? `${Math.round(item.count / totalSubs * 100)}%` : "0%"}
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </div>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm font-semibold">Gestion individuelle</CardTitle>
-            <p className="text-xs text-muted-foreground">Gérer manuellement l'abonnement de chaque utilisateur</p>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {usersLoading ? (
-            <div className="p-4 space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div>
+      <Dialog
+        open={!!selectedId}
+        onOpenChange={(open) => { if (!open) { setSelectedId(null); setGrantExpiry(""); setTrialDays("14"); } }}
+      >
+        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+          {detailLoading || !client ? (
+            <div className="space-y-4 py-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/30">
-                  <TableHead>Utilisateur</TableHead>
-                  <TableHead className="hidden sm:table-cell">Email</TableHead>
-                  <TableHead>Statut</TableHead>
-                  <TableHead className="hidden md:table-cell">Expiration</TableHead>
-                  <TableHead className="w-[80px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {users && users.length > 0 ? (
-                  users.map((u) => (
-                    <TableRow key={u.id} data-testid={`row-sub-${u.id}`}>
-                      <TableCell className="font-medium text-sm">
-                        {u.firstName} {u.lastName}
-                      </TableCell>
-                      <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">{u.email || "—"}</TableCell>
-                      <TableCell>
-                        <SubBadge status={(u as any).subscriptionStatus || "none"} />
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                        {(u as any).subscriptionExpiresAt
-                          ? new Date((u as any).subscriptionExpiresAt).toLocaleDateString("fr-FR")
-                          : "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Button variant="ghost" size="icon" onClick={() => openEditModal(u)} data-testid={`button-edit-sub-${u.id}`}>
-                          <Pencil className="w-4 h-4 text-muted-foreground" />
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 flex-wrap">
+                  <span data-testid="text-detail-name">{`${client.firstName ?? ""} ${client.lastName ?? ""}`.trim() || "Anonyme"}</span>
+                  <ClientPlanBadge client={client} />
+                  {client.isAdmin && (
+                    <Badge className="text-[11px] bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                      <Shield className="w-3 h-3 mr-1" />Admin
+                    </Badge>
+                  )}
+                </DialogTitle>
+                <p className="text-sm text-muted-foreground">{client.email || "—"}</p>
+              </DialogHeader>
+
+              <div className="space-y-5 py-1">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Cartes</p>
+                    <p className="text-lg font-bold" data-testid="text-detail-cards">{client.activity.cards}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Vocal</p>
+                    <p className="text-lg font-bold" data-testid="text-detail-vocal">{client.activity.vocal}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sessions</p>
+                    <p className="text-lg font-bold" data-testid="text-detail-sessions">{client.activity.sessions}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Inscrit le</p>
+                    <p className="text-sm font-semibold mt-1">{formatDate(client.createdAt)}</p>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-muted-foreground" />
+                    Activité (30 derniers jours)
+                  </h3>
+                  <UsageBars data={detail.usageByDay} />
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                    <History className="w-4 h-4 text-muted-foreground" />
+                    Historique d'abonnement
+                  </h3>
+                  <div className="space-y-2">
+                    {detail.subscriptionHistory.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        Aucun historique d'abonnement Stripe.
+                        {client.source === "admin" && " Cet accès est un avantage offert manuellement."}
+                      </p>
+                    ) : (
+                      detail.subscriptionHistory.map((s) => (
+                        <div key={s.id} className="rounded-lg border p-3" data-testid={`row-sub-history-${s.id}`}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <StripeStatusTag status={s.status} />
+                            <span className="text-sm font-medium">
+                              {s.interval === "month" ? "Mensuel" : s.interval === "year" ? "Annuel" : "—"}
+                            </span>
+                            {s.unitAmount != null && (
+                              <span className="text-sm text-muted-foreground">
+                                {formatEur(s.unitAmount)}{s.interval === "month" ? "/mois" : s.interval === "year" ? "/an" : ""}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Depuis {formatDate(s.created)} · échéance {formatDate(s.currentPeriodEnd)}
+                            {s.cancelAtPeriodEnd ? " · annulation programmée" : ""}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
+                  <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <Gift className="w-4 h-4 text-violet-600" />
+                    Accès complémentaire (offert)
+                  </h3>
+                  <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                    <div className="space-y-1.5 flex-1">
+                      <Label htmlFor="grant-expiry" className="text-xs">Expiration (vide = permanent)</Label>
+                      <Input
+                        id="grant-expiry"
+                        type="date"
+                        value={grantExpiry}
+                        onChange={(e) => setGrantExpiry(e.target.value)}
+                        data-testid="input-grant-expiry"
+                      />
+                    </div>
+                    <ConfirmAction
+                      testId="button-confirm-grant"
+                      title="Offrir un accès Premium ?"
+                      description={
+                        grantExpiry
+                          ? `${client.firstName ?? "Ce client"} bénéficiera d'un accès Premium offert jusqu'au ${formatDate(grantExpiry)}.`
+                          : `${client.firstName ?? "Ce client"} bénéficiera d'un accès Premium offert sans expiration (permanent).`
+                      }
+                      confirmLabel="Offrir Premium"
+                      onConfirm={() => grantPremium.mutate({ userId: client.id, expiresAt: grantExpiry || null })}
+                      trigger={
+                        <Button variant="outline" className="border-violet-500/40 text-violet-700 dark:text-violet-400" data-testid="button-grant-premium">
+                          <Gift className="w-4 h-4 mr-2" />Offrir Premium
                         </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground py-8">Aucun utilisateur</TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                      }
+                    />
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                    <div className="space-y-1.5 w-full sm:w-40">
+                      <Label htmlFor="trial-days" className="text-xs">Durée d'essai (jours)</Label>
+                      <Input
+                        id="trial-days"
+                        type="number"
+                        min={1}
+                        max={365}
+                        value={trialDays}
+                        onChange={(e) => setTrialDays(e.target.value)}
+                        data-testid="input-trial-days"
+                      />
+                    </div>
+                    <ConfirmAction
+                      testId="button-confirm-trial"
+                      title="Accorder un essai ?"
+                      description={`${client.firstName ?? "Ce client"} bénéficiera d'un essai gratuit de ${trialDays} jour(s).`}
+                      confirmLabel="Accorder l'essai"
+                      onConfirm={() => extendTrial.mutate({ userId: client.id, days: Math.max(1, Number(trialDays) || 14) })}
+                      trigger={
+                        <Button variant="outline" data-testid="button-extend-trial">
+                          <Clock className="w-4 h-4 mr-2" />Accorder un essai
+                        </Button>
+                      }
+                    />
+                  </div>
+
+                  {client.overrideStatus !== "none" && (
+                    <ConfirmAction
+                      testId="button-confirm-revoke"
+                      title="Révoquer l'accès offert ?"
+                      description={`L'avantage manuel de ${client.firstName ?? "ce client"} sera retiré. Son accès dépendra alors de son abonnement Stripe (ou redeviendra gratuit).`}
+                      confirmLabel="Révoquer"
+                      destructive
+                      onConfirm={() => revokePremium.mutate(client.id)}
+                      trigger={
+                        <Button variant="ghost" size="sm" className="text-red-600" data-testid="button-revoke-premium">
+                          <X className="w-4 h-4 mr-2" />Révoquer l'accès offert
+                        </Button>
+                      }
+                    />
+                  )}
+                </div>
+
+                <div className="rounded-lg border p-4 space-y-3">
+                  <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-muted-foreground" />
+                    Compte
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    <ConfirmAction
+                      testId="button-confirm-toggle-admin"
+                      title={client.isAdmin ? "Retirer le rôle admin ?" : "Promouvoir administrateur ?"}
+                      description={
+                        client.isAdmin
+                          ? `${client.firstName ?? "Ce client"} n'aura plus accès au panneau d'administration.`
+                          : `${client.firstName ?? "Ce client"} aura un accès complet au panneau d'administration.`
+                      }
+                      confirmLabel={client.isAdmin ? "Retirer" : "Promouvoir"}
+                      onConfirm={() => toggleAdmin.mutate({ userId: client.id, isAdmin: !client.isAdmin })}
+                      trigger={
+                        <Button variant="outline" size="sm" data-testid="button-toggle-admin">
+                          <Shield className="w-4 h-4 mr-2" />
+                          {client.isAdmin ? "Retirer admin" : "Passer admin"}
+                        </Button>
+                      }
+                    />
+                    <ConfirmAction
+                      testId="button-confirm-delete-client"
+                      title="Supprimer ce client ?"
+                      description={`Cette action est irréversible. Le compte de ${client.firstName ?? "ce client"} et toutes ses données seront définitivement supprimés.`}
+                      confirmLabel="Supprimer définitivement"
+                      destructive
+                      onConfirm={() => deleteClient.mutate(client.id)}
+                      trigger={
+                        <Button variant="ghost" size="sm" className="text-red-600" data-testid="button-delete-client">
+                          <Trash2 className="w-4 h-4 mr-2" />Supprimer le client
+                        </Button>
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+            </>
           )}
-        </CardContent>
-      </Card>
-
-      <Card className="border-dashed border-2 bg-muted/20">
-        <CardContent className="p-5">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-              <CreditCard className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <p className="font-semibold text-sm">Intégration paiement</p>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                L'intégration Stripe pour la gestion automatique des paiements et abonnements est à venir.
-                Actuellement, la gestion des abonnements est manuelle via ce tableau de bord.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Abonnement — {editingUser?.firstName} {editingUser?.lastName}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label>Statut</Label>
-              <Select value={subForm.subscriptionStatus} onValueChange={(val) => setSubForm((f) => ({ ...f, subscriptionStatus: val }))}>
-                <SelectTrigger data-testid="select-sub-status-2">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Gratuit (aucun)</SelectItem>
-                  <SelectItem value="trial">Essai gratuit</SelectItem>
-                  <SelectItem value="active">Premium (actif)</SelectItem>
-                  <SelectItem value="expired">Expiré</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="sub-expires-2">Date d'expiration (optionnel)</Label>
-              <Input
-                id="sub-expires-2"
-                type="date"
-                value={subForm.subscriptionExpiresAt}
-                onChange={(e) => setSubForm((f) => ({ ...f, subscriptionExpiresAt: e.target.value }))}
-                data-testid="input-sub-expires-2"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingUser(null)}>Annuler</Button>
-            <Button
-              onClick={() => editingUser && updateSubscription.mutate({ userId: editingUser.id, data: subForm })}
-              disabled={updateSubscription.isPending}
-              data-testid="button-save-subscription-2"
-            >
-              {updateSubscription.isPending ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-              Enregistrer
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
