@@ -205,6 +205,27 @@ export class ObjectStorageService {
     }
   }
 
+  // Lists every uploaded avatar object currently in storage, returning their
+  // normalized `/objects/uploads/<userId>/...` entity paths. Used by the orphan
+  // reconciliation job to find files that no longer back a live user's avatar.
+  // Only enumerates the `uploads/` prefix, so unrelated private objects are
+  // never touched. The implicit "folder" placeholder (a zero-length object whose
+  // name equals the prefix) is filtered out.
+  async listUploadedAvatarPaths(): Promise<string[]> {
+    let entityDir = this.getPrivateObjectDir();
+    if (!entityDir.endsWith("/")) {
+      entityDir = `${entityDir}/`;
+    }
+    const { bucketName, objectName: privatePrefix } = parseObjectPath(entityDir);
+    const uploadsPrefix = `${privatePrefix}uploads/`;
+    const bucket = objectStorageClient.bucket(bucketName);
+    const [files] = await bucket.getFiles({ prefix: uploadsPrefix });
+    return files
+      .map((file) => file.name)
+      .filter((name) => name.length > uploadsPrefix.length)
+      .map((name) => `/objects/${name.slice(privatePrefix.length)}`);
+  }
+
   normalizeObjectEntityPath(
     rawPath: string,
   ): string {

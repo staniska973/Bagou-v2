@@ -1011,6 +1011,21 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
+  // On-demand orphaned-avatar reconciliation. Best-effort avatar cleanup on the
+  // user-facing flows can leave orphans behind during a transient storage
+  // outage; this sweep finds and removes them. Safe to re-run (idempotent) and
+  // never deletes an object still referenced by a live user.
+  app.post("/api/admin/avatars/reconcile", isAdminSession, async (_req: any, res) => {
+    try {
+      const { reconcileOrphanedAvatars } = await import("./avatar-reconciliation");
+      const result = await reconcileOrphanedAvatars();
+      res.json(result);
+    } catch (error) {
+      console.error("Error reconciling orphaned avatars:", error);
+      res.status(500).json({ error: "Failed to reconcile orphaned avatars" });
+    }
+  });
+
   app.patch("/api/admin/users/:id/admin", isAdminSession, async (req: any, res) => {
     try {
       const { db: dbModule } = await import("./db");

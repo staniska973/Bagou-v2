@@ -106,6 +106,20 @@ app.use((req, res, next) => {
     console.error("Stripe initialisation skipped:", err?.message || err),
   );
 
+  // Periodic safety net for orphaned avatar files. User-facing avatar cleanup is
+  // best-effort, so a transient storage outage can leave files behind with no
+  // retry; this sweep reconciles storage against live users and removes orphans.
+  // Idempotent and non-fatal: failures are logged and retried on the next tick.
+  const AVATAR_RECONCILE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  const runAvatarReconcile = () =>
+    import("./avatar-reconciliation")
+      .then(({ reconcileOrphanedAvatars }) => reconcileOrphanedAvatars())
+      .catch((err) =>
+        console.error("Avatar reconciliation skipped:", err?.message || err),
+      );
+  setTimeout(runAvatarReconcile, 60 * 1000).unref();
+  setInterval(runAvatarReconcile, AVATAR_RECONCILE_INTERVAL_MS).unref();
+
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
