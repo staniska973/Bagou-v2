@@ -252,7 +252,19 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
         }
       }
 
-      // 2. Remove all local data for this user.
+      // 2. Remove the user's uploaded avatar from object storage (best-effort).
+      // Failure here must not block account deletion; an orphaned file is far
+      // less bad than leaving the account undeleted, so we only log on error.
+      if (account?.customImageUrl) {
+        try {
+          const { ObjectStorageService } = await import("./replit_integrations/object_storage");
+          await new ObjectStorageService().deleteObjectEntity(account.customImageUrl);
+        } catch (storageErr) {
+          console.error("Failed to delete avatar during account deletion:", storageErr);
+        }
+      }
+
+      // 3. Remove all local data for this user.
       await dbModule.transaction(async (tx: any) => {
         await tx.delete(userProfiles).where(eq(userProfiles.userId, userId));
         await tx.delete(usageEvents).where(eq(usageEvents.userId, userId));
@@ -260,7 +272,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
         await tx.delete(users).where(eq(users.id, userId));
       });
 
-      // 3. Invalidate the session server-side so the now-deleted account can't
+      // 4. Invalidate the session server-side so the now-deleted account can't
       // keep making authenticated requests if the client redirect is skipped.
       req.logout((logoutErr: any) => {
         if (logoutErr) console.error("logout after account deletion failed:", logoutErr);
@@ -322,17 +334,31 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       const rawUrl = req.body?.imageUrl;
       const { authStorage } = await import("./replit_integrations/auth");
 
+      // The currently stored avatar (if any) is deleted once the new one is in
+      // place, so we don't accumulate orphaned files on re-uploads or clears.
+      const previousImageUrl = (await authStorage.getUser(userId))?.customImageUrl ?? null;
+      const { ObjectStorageService } = await import("./replit_integrations/object_storage");
+      const objectStorageService = new ObjectStorageService();
+
+      // Best-effort cleanup of the previous avatar. Never block the update on it.
+      const deletePrevious = async () => {
+        if (!previousImageUrl) return;
+        try {
+          await objectStorageService.deleteObjectEntity(previousImageUrl);
+        } catch (storageErr) {
+          console.error("Failed to delete previous avatar:", storageErr);
+        }
+      };
+
       if (!rawUrl) {
         const cleared = await authStorage.updateCustomImage(userId, null);
+        await deletePrevious();
         return res.json(cleared);
       }
 
       if (typeof rawUrl !== "string") {
         return res.status(400).json({ error: "imageUrl must be a string" });
       }
-
-      const { ObjectStorageService } = await import("./replit_integrations/object_storage");
-      const objectStorageService = new ObjectStorageService();
 
       // Only allow claiming an object the caller actually uploaded. The upload
       // route namespaces objects under uploads/<userId>/..., so reject anything
@@ -349,6 +375,10 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       });
 
       const updated = await authStorage.updateCustomImage(userId, objectPath);
+      // Don't delete if somehow the same path is being re-saved.
+      if (previousImageUrl && previousImageUrl !== objectPath) {
+        await deletePrevious();
+      }
       res.json(updated);
     } catch (error) {
       console.error("Error updating profile image:", error);

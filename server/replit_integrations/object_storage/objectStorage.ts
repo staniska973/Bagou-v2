@@ -185,6 +185,26 @@ export class ObjectStorageService {
     return objectFile;
   }
 
+  // Deletes an object entity given its /objects/... path. Best-effort: a missing
+  // object (already gone) is treated as success so callers can clean up orphaned
+  // avatars without failing the surrounding operation. Returns false when the
+  // path isn't a deletable object entity path.
+  async deleteObjectEntity(objectPath: string): Promise<boolean> {
+    if (!objectPath || !objectPath.startsWith("/objects/")) {
+      return false;
+    }
+    try {
+      const objectFile = await this.getObjectEntityFile(objectPath);
+      await objectFile.delete({ ignoreNotFound: true });
+      return true;
+    } catch (error) {
+      if (error instanceof ObjectNotFoundError) {
+        return true;
+      }
+      throw error;
+    }
+  }
+
   normalizeObjectEntityPath(
     rawPath: string,
   ): string {
