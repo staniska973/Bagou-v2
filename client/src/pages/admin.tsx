@@ -618,7 +618,101 @@ function OverviewSection() {
           )}
         </CardContent>
       </Card>
+
+      <AvatarCleanupCard />
     </div>
+  );
+}
+
+type AvatarReconcileResult = {
+  scanned: number;
+  live: number;
+  orphans: number;
+  removed: number;
+};
+
+function AvatarCleanupCard() {
+  const { toast } = useToast();
+  const [result, setResult] = useState<AvatarReconcileResult | null>(null);
+
+  const reconcile = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/avatars/reconcile");
+      return (await res.json()) as AvatarReconcileResult;
+    },
+    onSuccess: (data) => {
+      setResult(data);
+      toast({
+        title: "Nettoyage terminé",
+        description:
+          data.removed > 0
+            ? `${data.removed} photo(s) orpheline(s) supprimée(s).`
+            : "Aucune photo orpheline à supprimer.",
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Échec du nettoyage",
+        description: err?.message || "Impossible de nettoyer les photos. Réessayez.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Trash2 className="w-4 h-4 text-muted-foreground" />
+          Nettoyage des photos de profil
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Supprime les photos de profil stockées qui ne sont plus rattachées à aucun
+          utilisateur (laissées par une panne de stockage, par exemple). Lancé automatiquement
+          chaque jour — utilisez ce bouton pour forcer un passage immédiat.
+        </p>
+        <Button
+          onClick={() => reconcile.mutate()}
+          disabled={reconcile.isPending}
+          data-testid="button-avatar-cleanup"
+        >
+          {reconcile.isPending ? (
+            <>
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              Nettoyage en cours...
+            </>
+          ) : (
+            <>
+              <Trash2 className="w-4 h-4 mr-2" />
+              Nettoyer les photos orphelines
+            </>
+          )}
+        </Button>
+
+        {result && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" data-testid="avatar-cleanup-result">
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Analysées</p>
+              <p className="text-lg font-semibold" data-testid="text-avatar-scanned">{result.scanned}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Actives</p>
+              <p className="text-lg font-semibold" data-testid="text-avatar-live">{result.live}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Orphelines</p>
+              <p className="text-lg font-semibold" data-testid="text-avatar-orphans">{result.orphans}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Supprimées</p>
+              <p className="text-lg font-semibold text-emerald-600" data-testid="text-avatar-removed">{result.removed}</p>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
