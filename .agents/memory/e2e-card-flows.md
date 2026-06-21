@@ -19,6 +19,11 @@ WHERE language='fr' AND card_id NOT IN (<N card_ids to keep new>);
 **Why:** the dev DB has ~1440 cards, so a fresh profile otherwise gets a 5–10 card queue — too many AI `generate-answer` calls for the test step budget.
 **How to apply:** This INSERT touches ~1440 rows on purpose. Test subagents tend to "correct" it down to N rows (which inverts the logic and leaves the full queue) — explicitly tell the agent the large row count is expected and must not be altered.
 
+## Settings (/parametres) + delete-account flows
+- `/parametres` redirects to `/onboarding` when the logged-in user has NO `user_profiles` row. Skip onboarding by seeding directly after login: `INSERT INTO user_profiles (user_id) VALUES ('<sub>');` — every other column has a safe default.
+- Delete account: `button-delete-account` opens AlertDialog `dialog-delete-account`, confirm with `button-confirm-delete`; client then redirects to `/api/logout`. Assert teardown via DB (`user_profiles`/`users` count = 0 for the sub) AND that `GET /api/auth/user` now returns 401 (server destroys the session, not just the client redirect).
+- **Schema-drift gotcha:** login (`/api/login`) crashed with 502 `column "custom_image_url" of relation "users" does not exist` because the dev DB was behind `shared/models/auth.ts`. Fix is `npm run db:push --force` then restart — not a code bug. Run db:push first if auth/upsert 502s in e2e.
+
 ## Gotchas
 - Onboarding sometimes glitches and resets to step 1 after the final click even though `POST /api/profiles` returns 201. Don't treat as failure; the profile exists — navigate to the next page by URL.
 - Reaching the parcours summary without a mic: use the "Sauter l'oral et voir mon débrief" button (`button-parcours-skip-oral`).
