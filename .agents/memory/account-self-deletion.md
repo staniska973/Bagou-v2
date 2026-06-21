@@ -25,5 +25,17 @@ description: What a correct DELETE /api/account must do — local cleanup tables
    client's `/api/logout` redirect. (Session cookie uses the default `connect.sid`.)
 
 **How to apply:** any "delete my account / data" feature on this app needs all
-three steps; testing the no-Stripe path is easy, the Stripe-cancel path needs a
-real subscription so verify it by reasoning + SDK method existence.
+three steps.
+
+**Testing the Stripe-cancel path without a real subscription:** `stripeClient.ts`
+exposes a test-only injection hook (`__setStripeClientFactoryForTests`) so specs
+can substitute a fake Stripe client — the dynamic `import("./stripeClient")` in
+the route and the test resolve to the same module instance, so setting the hook
+in the test takes effect in the route. (Reassigning a dynamic-import namespace
+property does NOT work under tsx/esbuild — assignment silently no-ops and the
+route still sees the real export; that's why a function-call hook is needed.)
+The local-delete transaction and `authStorage.getUser` are stubbed by mutating
+the imported `db`/`authStorage` objects (same trick as the profile-image spec).
+A passport stub must also provide `req.logout` + `req.session.destroy` or the
+success path throws. Spec: `server/account-deletion.test.ts` (in the `test`
+validation workflow).

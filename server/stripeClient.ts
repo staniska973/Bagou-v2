@@ -53,10 +53,26 @@ async function getStripeCredentials(): Promise<{ secretKey: string; webhookSecre
 }
 
 /**
+ * Test-only injection seam. Specs can substitute a fake Stripe client so the
+ * account-deletion (and any other) flow can be exercised without the real
+ * connector or live network calls. MUST never be set in production; left null,
+ * `getUncachableStripeClient` behaves exactly as before.
+ */
+let stripeClientFactoryForTests: (() => Promise<Stripe>) | null = null;
+export function __setStripeClientFactoryForTests(
+  factory: (() => Promise<Stripe>) | null,
+): void {
+  stripeClientFactoryForTests = factory;
+}
+
+/**
  * Returns a fresh authenticated Stripe client.
  * Not cached -- fetches credentials on every call so rotated keys are picked up.
  */
 export async function getUncachableStripeClient(): Promise<Stripe> {
+  if (stripeClientFactoryForTests) {
+    return stripeClientFactoryForTests();
+  }
   const { secretKey } = await getStripeCredentials();
   return new Stripe(secretKey);
 }
