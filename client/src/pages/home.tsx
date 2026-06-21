@@ -120,7 +120,7 @@ export default function Home() {
               <TrendingUp className="w-4 h-4" />
             </Button>
             <Avatar className="w-7 h-7 cursor-pointer" onClick={() => navigate("/stats")}>
-              <AvatarImage src={user?.profileImageUrl || undefined} />
+              <AvatarImage src={user?.customImageUrl || user?.profileImageUrl || undefined} />
               <AvatarFallback><UserIcon className="w-3.5 h-3.5" /></AvatarFallback>
             </Avatar>
             <Button variant="ghost" size="icon" onClick={() => navigate("/parametres")} data-testid="button-settings">

@@ -309,6 +309,53 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
+  // Persist a user-uploaded avatar. The client first uploads the file directly to
+  // object storage via a presigned URL (POST /api/uploads/request-url), then calls
+  // this with the returned upload URL. We normalise it to an /objects/... path,
+  // mark it public-readable (owned by the user), and store it on the user record.
+  // Sending an empty/null imageUrl clears it and falls back to the OAuth avatar.
+  app.put("/api/account/profile-image", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
+
+      const rawUrl = req.body?.imageUrl;
+      const { authStorage } = await import("./replit_integrations/auth");
+
+      if (!rawUrl) {
+        const cleared = await authStorage.updateCustomImage(userId, null);
+        return res.json(cleared);
+      }
+
+      if (typeof rawUrl !== "string") {
+        return res.status(400).json({ error: "imageUrl must be a string" });
+      }
+
+      const { ObjectStorageService } = await import("./replit_integrations/object_storage");
+      const objectStorageService = new ObjectStorageService();
+
+      // Only allow claiming an object the caller actually uploaded. The upload
+      // route namespaces objects under uploads/<userId>/..., so reject anything
+      // outside this user's namespace to prevent ACL takeover of others' objects.
+      const normalized = objectStorageService.normalizeObjectEntityPath(rawUrl);
+      const ownedPrefix = `/objects/uploads/${encodeURIComponent(userId)}/`;
+      if (!normalized.startsWith(ownedPrefix)) {
+        return res.status(403).json({ error: "Cannot claim this object" });
+      }
+
+      const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(rawUrl, {
+        owner: userId,
+        visibility: "public",
+      });
+
+      const updated = await authStorage.updateCustomImage(userId, objectPath);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating profile image:", error);
+      res.status(500).json({ error: "Failed to update profile image" });
+    }
+  });
+
   app.get("/api/flashcards/due/:profileId", async (req, res) => {
     try {
       const profileId = parseInt(req.params.profileId);

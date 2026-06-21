@@ -17,6 +17,9 @@ export const users = pgTable("users", {
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
+  // User-uploaded avatar (object storage path, e.g. /objects/uploads/<id>).
+  // Takes precedence over the OAuth profileImageUrl when set.
+  customImageUrl: varchar("custom_image_url"),
   isAdmin: boolean("is_admin").notNull().default(false),
   // Manual admin override (comp/grant), independent of Stripe.
   subscriptionStatus: varchar("subscription_status").notNull().default("none"),

@@ -11,10 +11,13 @@ import {
   Sun,
   Moon,
   Monitor,
+  Camera,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ObjectUploader } from "@/components/ObjectUploader";
+import { useUpload } from "@/hooks/use-upload";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -166,6 +169,28 @@ export default function Settings() {
       }),
   });
 
+  const { getUploadParameters } = useUpload();
+
+  const saveProfileImage = useMutation({
+    mutationFn: async (imageUrl: string | null) => {
+      const res = await apiRequest("PUT", "/api/account/profile-image", { imageUrl });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      toast({
+        title: "Photo mise à jour",
+        description: "Ta nouvelle photo de profil est visible dans toute l'app.",
+      });
+    },
+    onError: () =>
+      toast({
+        title: "Erreur",
+        description: "Impossible de mettre à jour la photo. Réessaie dans un instant.",
+        variant: "destructive",
+      }),
+  });
+
   const handleLanguageChange = (lang: Language) => {
     const previous = language;
     setLanguage(lang);
@@ -219,13 +244,13 @@ export default function Settings() {
           <Card>
             <CardContent className="space-y-5 p-4">
               <div className="flex items-center gap-3">
-                <Avatar className="h-12 w-12">
-                  <AvatarImage src={user?.profileImageUrl || undefined} />
+                <Avatar className="h-12 w-12" data-testid="img-account-avatar">
+                  <AvatarImage src={user?.customImageUrl || user?.profileImageUrl || undefined} />
                   <AvatarFallback>
                     <UserIcon className="h-5 w-5" />
                   </AvatarFallback>
                 </Avatar>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold" data-testid="text-account-name">
                     {fullName}
                   </p>
@@ -233,7 +258,34 @@ export default function Settings() {
                     {user?.email || "—"}
                   </p>
                 </div>
+                <ObjectUploader
+                  maxNumberOfFiles={1}
+                  maxFileSize={10 * 1024 * 1024}
+                  onGetUploadParameters={getUploadParameters}
+                  onComplete={(result) => {
+                    const uploaded = result.successful?.[0];
+                    const uploadURL = uploaded?.uploadURL;
+                    if (uploadURL) saveProfileImage.mutate(uploadURL);
+                  }}
+                  buttonClassName="h-9 shrink-0 bg-transparent border border-border text-foreground hover-elevate active-elevate-2"
+                >
+                  <span className="flex items-center gap-1.5 text-sm font-medium" data-testid="button-upload-photo">
+                    <Camera className="h-4 w-4" />
+                    Photo
+                  </span>
+                </ObjectUploader>
               </div>
+              {user?.customImageUrl && (
+                <button
+                  type="button"
+                  onClick={() => saveProfileImage.mutate(null)}
+                  disabled={saveProfileImage.isPending}
+                  className="text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+                  data-testid="button-remove-photo"
+                >
+                  Rétablir la photo par défaut
+                </button>
+              )}
 
               <div className="space-y-2">
                 <Label>Langue</Label>

@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
+import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { registerStripeRoutes } from "./stripeRoutes";
 import { initStripe } from "./stripeInit";
 import { WebhookHandlers } from "./webhookHandlers";
@@ -94,6 +95,7 @@ app.use((req, res, next) => {
 (async () => {
   await setupAuth(app);
   registerAuthRoutes(app);
+  registerObjectStorageRoutes(app);
   registerStripeRoutes(app);
 
   await registerRoutes(httpServer, app);
