@@ -39,3 +39,10 @@ the imported `db`/`authStorage` objects (same trick as the profile-image spec).
 A passport stub must also provide `req.logout` + `req.session.destroy` or the
 success path throws. Spec: `server/account-deletion.test.ts` (in the `test`
 validation workflow).
+
+**Session-invalidation (step 3) is asserted, not just stubbed:** the spec has a
+session-backed auth path (an in-memory store keyed by an `x-test-session` header)
+where `req.session.destroy` actually deletes the session entry. The case proves
+the route calls `req.logout` AND `req.session.destroy`, clears the `connect.sid`
+cookie (empty + expired, read via undici `getSetCookie()`), and that reusing the
+same session afterward is rejected 401 — i.e. a deleted account is locked out.

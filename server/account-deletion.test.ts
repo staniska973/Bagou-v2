@@ -36,6 +36,11 @@ import { registerRoutes } from "./routes";
  *   3. A user's uploaded avatar object is removed from storage when their
  *      account is deleted, and the deletion is best-effort (a storage failure
  *      must NOT block the account deletion itself).
+ *   4. A successful deletion invalidates the session server-side: the route
+ *      calls req.logout AND req.session.destroy, clears the connect.sid cookie,
+ *      and a follow-up request reusing the same session is rejected (401). This
+ *      proves a just-deleted account can't keep making authenticated requests
+ *      even if the client never follows the logout redirect.
  */
 
 let failures = 0;
@@ -121,6 +126,25 @@ const fakeStripe = {
 };
 __setStripeClientFactoryForTests(async () => fakeStripe as any);
 
+// ---- Session-backed auth (for the session-invalidation case) ---------------
+// A tiny in-memory session store keyed by a fake session id passed via the
+// `x-test-session` header. This lets us prove the route *actually* invalidates
+// the session: req.session.destroy removes the entry, so a later request that
+// reuses the same session id no longer authenticates. We also record per-session
+// whether req.logout / req.session.destroy were called.
+const sessionStore: Record<string, { userId: string }> = {};
+const sessionInvalidation: Record<
+  string,
+  { logoutCalled: boolean; destroyCalled: boolean }
+> = {};
+let sessionSeq = 0;
+function createSession(userId: string): string {
+  const sid = `sess-${++sessionSeq}`;
+  sessionStore[sid] = { userId };
+  sessionInvalidation[sid] = { logoutCalled: false, destroyCalled: false };
+  return sid;
+}
+
 // ---- App wiring ------------------------------------------------------------
 
 async function buildApp() {
@@ -131,8 +155,31 @@ async function buildApp() {
   // the route's `req.logout` / `req.session.destroy` calls have something to
   // call. `x-test-user` present => authenticated as that user.
   app.use((req: any, _res, next) => {
+    const sid = req.headers["x-test-session"] as string | undefined;
     const u = req.headers["x-test-user"];
-    if (u) {
+    if (sid && sessionStore[sid]) {
+      // Session-backed auth: req.user is derived from the live session store, so
+      // once req.session.destroy removes the entry the session stops
+      // authenticating — exactly the guarantee we want to prove.
+      const userId = sessionStore[sid].userId;
+      req.user = {
+        claims: { sub: userId },
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      };
+      req.isAuthenticated = () => true;
+      req.logout = (cb: (err?: any) => void) => {
+        sessionInvalidation[sid].logoutCalled = true;
+        req.user = undefined;
+        cb();
+      };
+      req.session = {
+        destroy: (cb: (err?: any) => void) => {
+          sessionInvalidation[sid].destroyCalled = true;
+          delete sessionStore[sid];
+          cb();
+        },
+      };
+    } else if (u) {
       req.user = {
         claims: { sub: String(u) },
         expires_at: Math.floor(Date.now() / 1000) + 3600,
@@ -155,15 +202,16 @@ async function buildApp() {
   return { server, base: `http://127.0.0.1:${port}` };
 }
 
-type Resp = { status: number; json: any };
+type Resp = { status: number; json: any; setCookie: string[] };
 async function call(
   base: string,
   method: string,
   path: string,
-  opts: { user?: string } = {},
+  opts: { user?: string; session?: string } = {},
 ): Promise<Resp> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (opts.user) headers["x-test-user"] = opts.user;
+  if (opts.session) headers["x-test-session"] = opts.session;
   const res = await fetch(base + path, { method, headers });
   let json: any = null;
   try {
@@ -171,7 +219,12 @@ async function call(
   } catch {
     /* no body */
   }
-  return { status: res.status, json };
+  // undici exposes the raw Set-Cookie headers (one per cookie) via getSetCookie.
+  const setCookie =
+    typeof (res.headers as any).getSetCookie === "function"
+      ? (res.headers as any).getSetCookie()
+      : ([res.headers.get("set-cookie")].filter(Boolean) as string[]);
+  return { status: res.status, json, setCookie };
 }
 
 // ---- Test cases ------------------------------------------------------------
@@ -374,6 +427,70 @@ async function run() {
       assert(
         deletedTables.includes("users"),
         "account rows must still be cleared even when avatar delete throws",
+      );
+    }
+
+    // 7. Session invalidation (the security guarantee of step 3): a successful
+    //    deletion must log the user out, destroy the session, clear the
+    //    connect.sid cookie, AND a follow-up request reusing the same session
+    //    must be rejected as unauthenticated — so a just-deleted account can't
+    //    keep making authenticated requests even if the client never follows
+    //    the logout redirect.
+    {
+      const userId = "session-user-1";
+      fakeUsers[userId] = {
+        id: userId,
+        stripeCustomerId: null,
+        customImageUrl: null,
+      };
+      cancelShouldThrow = false;
+      avatarDeleteShouldThrow = false;
+      deletedAvatarPaths = [];
+      events = [];
+      const sid = createSession(userId);
+
+      const r = await call(base, "DELETE", "/api/account", { session: sid });
+      assert(r.status === 200, `session delete should be 200, got ${r.status}`);
+
+      // The route must actually call BOTH session-teardown hooks, not just
+      // have them stubbed.
+      assert(
+        sessionInvalidation[sid].logoutCalled,
+        "successful deletion must call req.logout",
+      );
+      assert(
+        sessionInvalidation[sid].destroyCalled,
+        "successful deletion must call req.session.destroy",
+      );
+
+      // The connect.sid cookie must be cleared (empty value, expired). express's
+      // res.clearCookie emits a Set-Cookie like `connect.sid=; Path=/; Expires=…1970`.
+      const connectSidCookie = r.setCookie.find((c) => /^connect\.sid=/.test(c));
+      assert(
+        !!connectSidCookie,
+        `deletion must clear the connect.sid cookie, got ${JSON.stringify(r.setCookie)}`,
+      );
+      assert(
+        !!connectSidCookie && /^connect\.sid=;/.test(connectSidCookie),
+        `connect.sid cookie must be emptied, got ${connectSidCookie}`,
+      );
+      assert(
+        !!connectSidCookie &&
+          /(Expires=Thu, 01 Jan 1970|Max-Age=0)/i.test(connectSidCookie),
+        `connect.sid cookie must be expired, got ${connectSidCookie}`,
+      );
+
+      // The session was destroyed server-side, so reusing the SAME session now
+      // fails the real isAuthenticated guard — the deleted account is locked out.
+      events = [];
+      const reuse = await call(base, "DELETE", "/api/account", { session: sid });
+      assert(
+        reuse.status === 401,
+        `reusing a destroyed session must be 401, got ${reuse.status}`,
+      );
+      assert(
+        events.length === 0,
+        "a locked-out session must not touch Stripe or DB",
       );
     }
   } finally {
