@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Sparkles,
   Route as RouteIcon,
+  Settings,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -122,6 +123,9 @@ export default function Home() {
               <AvatarImage src={user?.profileImageUrl || undefined} />
               <AvatarFallback><UserIcon className="w-3.5 h-3.5" /></AvatarFallback>
             </Avatar>
+            <Button variant="ghost" size="icon" onClick={() => navigate("/parametres")} data-testid="button-settings">
+              <Settings className="w-4 h-4" />
+            </Button>
             <Button variant="ghost" size="icon" onClick={() => logout()} data-testid="button-logout">
               <LogOut className="w-4 h-4" />
             </Button>

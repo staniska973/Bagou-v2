@@ -124,12 +124,17 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     });
   }).catch(() => {});
 
-  app.get("/api/profiles/:id", async (req, res) => {
+  app.get("/api/profiles/:id", isAuthenticated, async (req: any, res) => {
     try {
       const id = parseInt(req.params.id);
       const profile = await storage.getProfile(id);
       if (!profile) {
         return res.status(404).json({ error: "Profile not found" });
+      }
+      // Only the owner may read a profile by id (prevents enumeration by id).
+      const authUserId = req.user?.claims?.sub;
+      if (!profile.userId || profile.userId !== authUserId) {
+        return res.status(403).json({ error: "Access denied" });
       }
       res.json(profile);
     } catch (error) {
@@ -155,9 +160,12 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.post("/api/profiles", async (req, res) => {
+  app.post("/api/profiles", isAuthenticated, async (req: any, res) => {
     try {
-      const data = insertUserProfileSchema.parse(req.body);
+      // Force the owner to the authenticated user; never trust a body userId,
+      // so a caller can't create a profile for someone else.
+      const authUserId = req.user?.claims?.sub;
+      const data = insertUserProfileSchema.parse({ ...req.body, userId: authUserId });
       const profile = await storage.createProfile(data);
       res.status(201).json(profile);
     } catch (error) {
@@ -180,13 +188,98 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       if (!existing.userId || existing.userId !== authUserId) {
         return res.status(403).json({ error: "Access denied" });
       }
-      // Never let the body reassign the row id or its owner.
-      const { id: _ignoreId, userId: _ignoreUserId, ...updates } = req.body ?? {};
+      // Validate against an allowlist of real profile columns (typed, unknown
+      // keys stripped). `id` is already omitted by the insert schema; we also
+      // drop `userId` so the body can never reassign the row's owner.
+      const parsed = insertUserProfileSchema.partial().safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid profile data", details: parsed.error.errors });
+      }
+      const { userId: _ignoreUserId, ...updates } = parsed.data;
       const profile = await storage.updateProfile(id, updates);
       res.json(profile);
     } catch (error) {
       console.error("Error updating profile:", error);
       res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
+  // AUTHENTICATED self-service account deletion. Removes ALL of the caller's
+  // own data (claims.sub only, never another user): the profile(s) — which
+  // cascade to srs_states / training_sessions / session_events — plus usage
+  // and vocal-session rows keyed by userId, and finally the users row.
+  //
+  // Two safety steps surround the local delete:
+  //  1. Any live Stripe subscription is cancelled FIRST, so a deleted account is
+  //     never billed afterwards. If Stripe can't be reached we abort (502) rather
+  //     than wipe the account and leave the user paying with no portal access.
+  //  2. The server destroys the session itself afterwards, so access is revoked
+  //     even if the client never reaches the /api/logout redirect.
+  app.delete("/api/account", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
+
+      const { db: dbModule } = await import("./db");
+      const { users, userProfiles, usageEvents, vocalSessions } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const { authStorage } = await import("./replit_integrations/auth");
+
+      // 1. Cancel external billing before we remove the local record. A free user
+      // with no Stripe customer skips this entirely.
+      const account = await authStorage.getUser(userId);
+      if (account?.stripeCustomerId) {
+        try {
+          const { getUncachableStripeClient } = await import("./stripeClient");
+          const stripe = await getUncachableStripeClient();
+          const subs = await stripe.subscriptions.list({
+            customer: account.stripeCustomerId,
+            status: "all",
+            limit: 100,
+          });
+          const billable = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
+          for (const sub of subs.data) {
+            if (billable.has(sub.status)) {
+              await stripe.subscriptions.cancel(sub.id);
+            }
+          }
+        } catch (stripeErr) {
+          console.error("Failed to cancel Stripe subscription during account deletion:", stripeErr);
+          return res.status(502).json({
+            error:
+              "Impossible d'annuler ton abonnement pour le moment. Réessaie, ou annule-le depuis « Gérer mon abonnement » avant de supprimer ton compte.",
+          });
+        }
+      }
+
+      // 2. Remove all local data for this user.
+      await dbModule.transaction(async (tx: any) => {
+        await tx.delete(userProfiles).where(eq(userProfiles.userId, userId));
+        await tx.delete(usageEvents).where(eq(usageEvents.userId, userId));
+        await tx.delete(vocalSessions).where(eq(vocalSessions.userId, userId));
+        await tx.delete(users).where(eq(users.id, userId));
+      });
+
+      // 3. Invalidate the session server-side so the now-deleted account can't
+      // keep making authenticated requests if the client redirect is skipped.
+      req.logout((logoutErr: any) => {
+        if (logoutErr) console.error("logout after account deletion failed:", logoutErr);
+        const done = () => {
+          res.clearCookie("connect.sid");
+          res.json({ success: true });
+        };
+        if (req.session) {
+          req.session.destroy((destroyErr: any) => {
+            if (destroyErr) console.error("session destroy after account deletion failed:", destroyErr);
+            done();
+          });
+        } else {
+          done();
+        }
+      });
+    } catch (error) {
+      console.error("Error deleting account:", error);
+      res.status(500).json({ error: "Failed to delete account" });
     }
   });
 

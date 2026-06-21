@@ -21,6 +21,7 @@ import Vocal from "@/pages/vocal";
 import Stats from "@/pages/stats";
 import Admin from "@/pages/admin";
 import Pricing from "@/pages/pricing";
+import SettingsPage from "@/pages/settings";
 
 function AuthenticatedRouter() {
   return (
@@ -31,6 +32,7 @@ function AuthenticatedRouter() {
       <Route path="/vocal" component={Vocal} />
       <Route path="/stats" component={Stats} />
       <Route path="/abonnement" component={Pricing} />
+      <Route path="/parametres" component={SettingsPage} />
       <Route path="/admin" component={Admin} />
       <Route path="/" component={Home} />
       <Route component={NotFound} />

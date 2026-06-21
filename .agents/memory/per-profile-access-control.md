@@ -21,3 +21,10 @@ for exactly this.
 
 **How to apply:** when adding `/api/.../:profileId` routes, copy the
 load-profile → 404-if-missing → 403-if-not-owner guard before doing any work.
+
+**Update:** the `/api/profiles` surface is now fully gated — `GET /api/profiles/:id`
+has `isAuthenticated` + owner check, `POST /api/profiles` forces
+`userId = claims.sub` (ignores body userId), and `PATCH /api/profiles/:id`
+validates with `insertUserProfileSchema.partial()` then strips `userId`. Other
+`:profileId` routes (e.g. `/api/stats/:profileId`, `/api/flashcards/due/:profileId`)
+may still be open — check before trusting them.

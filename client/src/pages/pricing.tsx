@@ -4,19 +4,11 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Check, Crown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSubscription } from "@/hooks/use-subscription";
+import { useBilling, formatPrice, intervalLabel } from "@/hooks/use-billing";
 import { Skeleton } from "@/components/ui/skeleton";
-
-interface Plan {
-  priceId: string;
-  unitAmount: number;
-  currency: string;
-  interval: string;
-  productName: string;
-}
 
 const PREMIUM_FEATURES = [
   "Cartes illimitées chaque jour",
@@ -25,28 +17,11 @@ const PREMIUM_FEATURES = [
   "Tous les thèmes et parcours",
 ];
 
-function formatPrice(unitAmount: number, currency: string): string {
-  return new Intl.NumberFormat("fr-FR", {
-    style: "currency",
-    currency: (currency || "eur").toUpperCase(),
-    minimumFractionDigits: 2,
-  }).format(unitAmount / 100);
-}
-
-function intervalLabel(interval: string): string {
-  if (interval === "year") return "/an";
-  if (interval === "month") return "/mois";
-  return "";
-}
-
 export default function Pricing() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { data: status, isLoading: statusLoading } = useSubscription();
-
-  const { data: plansData, isLoading: plansLoading } = useQuery<{ plans: Plan[] }>({
-    queryKey: ["/api/stripe/plans"],
-  });
+  const { plans, plansLoading, checkout, portal } = useBilling();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -67,39 +42,6 @@ export default function Pricing() {
     }
   }, [toast]);
 
-  const checkout = useMutation({
-    mutationFn: async (priceId: string) => {
-      const res = await apiRequest("POST", "/api/stripe/checkout", { priceId });
-      return (await res.json()) as { url: string };
-    },
-    onSuccess: (data) => {
-      if (data.url) window.location.href = data.url;
-    },
-    onError: () =>
-      toast({
-        title: "Erreur",
-        description: "Impossible de démarrer le paiement. Réessaie dans un instant.",
-        variant: "destructive",
-      }),
-  });
-
-  const portal = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/stripe/portal", {});
-      return (await res.json()) as { url: string };
-    },
-    onSuccess: (data) => {
-      if (data.url) window.location.href = data.url;
-    },
-    onError: () =>
-      toast({
-        title: "Erreur",
-        description: "Impossible d'ouvrir la gestion de l'abonnement.",
-        variant: "destructive",
-      }),
-  });
-
-  const plans = plansData?.plans ?? [];
   const isPaid = status?.isPremium ?? false;
   const tier = status?.tier ?? "free";
 
