@@ -34,3 +34,13 @@ and deletes any path not in the set of live `users.customImageUrl` values.
 full `storage.googleapis.com` URLs — run them through `normalizeObjectEntityPath`).
 Idempotent; never deletes a referenced object. Runs ~60s after boot + daily via
 `setInterval` in `server/index.ts`, and on demand via `POST /api/admin/avatars/reconcile`.
+
+**Grace period:** the sweep skips orphans whose storage `timeCreated` is younger
+than a grace period (default 1h, `DEFAULT_AVATAR_GRACE_PERIOD_MS`, overridable per
+call via `gracePeriodMs` or globally via `AVATAR_RECONCILE_GRACE_MS` env, ms).
+**Why:** closes the upload→claim race — a file uploaded via presigned URL whose
+`PUT /api/account/profile-image` claim hasn't landed yet would otherwise be deleted.
+`listUploadedAvatarPaths()` returns `{path, timeCreated}` (creation time from GCS
+`file.metadata.timeCreated`, the listing populates it). A null/unknown `timeCreated`
+is NOT protected — treated as an ordinary orphan and deleted, so missing metadata
+can't block cleanup. `reconcileOrphanedAvatars` takes a `now` clock for testing.

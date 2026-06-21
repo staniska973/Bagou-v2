@@ -7,6 +7,33 @@ export interface AvatarReconcileResult {
   live: number;
   orphans: number;
   removed: number;
+  skippedRecent: number;
+}
+
+export interface ReconcileOptions {
+  // Objects whose storage `timeCreated` is newer than this many milliseconds are
+  // left alone, even if no live user references them. This closes the race where
+  // a file is uploaded via the presigned URL but the claim step
+  // (PUT /api/account/profile-image) hasn't completed yet — without it the sweep
+  // could delete a brand-new, about-to-be-claimed avatar.
+  gracePeriodMs?: number;
+  // Injectable clock for testing.
+  now?: () => number;
+}
+
+// Default grace period: ignore objects younger than one hour. Overridable per
+// call, or via the AVATAR_RECONCILE_GRACE_MS env var (milliseconds).
+export const DEFAULT_AVATAR_GRACE_PERIOD_MS = 60 * 60 * 1000;
+
+function resolveGracePeriodMs(explicit?: number): number {
+  if (typeof explicit === "number" && explicit >= 0) {
+    return explicit;
+  }
+  const fromEnv = Number(process.env.AVATAR_RECONCILE_GRACE_MS);
+  if (Number.isFinite(fromEnv) && fromEnv >= 0) {
+    return fromEnv;
+  }
+  return DEFAULT_AVATAR_GRACE_PERIOD_MS;
 }
 
 // Reconciles uploaded avatar objects in object storage against the avatars that
@@ -19,8 +46,12 @@ export interface AvatarReconcileResult {
 //
 // It is idempotent (re-running with no new orphans removes nothing) and never
 // deletes an object that is still referenced by a current user.
-export async function reconcileOrphanedAvatars(): Promise<AvatarReconcileResult> {
+export async function reconcileOrphanedAvatars(
+  options: ReconcileOptions = {},
+): Promise<AvatarReconcileResult> {
   const objectStorageService = new ObjectStorageService();
+  const gracePeriodMs = resolveGracePeriodMs(options.gracePeriodMs);
+  const nowMs = (options.now ?? Date.now)();
 
   // Build the set of avatar paths still in use, normalized to the same
   // `/objects/...` form the storage listing returns so comparison is exact.
@@ -37,12 +68,27 @@ export async function reconcileOrphanedAvatars(): Promise<AvatarReconcileResult>
   }
 
   const storedAvatars = await objectStorageService.listUploadedAvatarPaths();
-  const orphans = storedAvatars.filter((path) => !liveAvatars.has(path));
+  const orphans = storedAvatars.filter(
+    (obj) => !liveAvatars.has(obj.path),
+  );
 
   let removed = 0;
-  for (const path of orphans) {
+  let skippedRecent = 0;
+  for (const obj of orphans) {
+    // Skip objects that were created within the grace period: they may be a
+    // freshly uploaded avatar whose claim step hasn't completed yet. A null
+    // creation time means storage didn't report one, so we treat the age as
+    // unknown and fall through to deletion (the object is still an orphan).
+    if (
+      gracePeriodMs > 0 &&
+      obj.timeCreated &&
+      nowMs - obj.timeCreated.getTime() < gracePeriodMs
+    ) {
+      skippedRecent += 1;
+      continue;
+    }
     try {
-      const deleted = await objectStorageService.deleteObjectEntity(path);
+      const deleted = await objectStorageService.deleteObjectEntity(obj.path);
       if (deleted) {
         removed += 1;
       }
@@ -50,7 +96,7 @@ export async function reconcileOrphanedAvatars(): Promise<AvatarReconcileResult>
       // Log and continue: one stubborn object should not abort the whole sweep,
       // and the next run will retry it (idempotent).
       console.error(
-        `[avatar-reconcile] failed to delete orphaned avatar ${path}:`,
+        `[avatar-reconcile] failed to delete orphaned avatar ${obj.path}:`,
         err,
       );
     }
@@ -61,10 +107,12 @@ export async function reconcileOrphanedAvatars(): Promise<AvatarReconcileResult>
     live: liveAvatars.size,
     orphans: orphans.length,
     removed,
+    skippedRecent,
   };
   console.log(
     `[avatar-reconcile] scanned=${result.scanned} live=${result.live} ` +
-      `orphans=${result.orphans} removed=${result.removed}`,
+      `orphans=${result.orphans} removed=${result.removed} ` +
+      `skippedRecent=${result.skippedRecent}`,
   );
   return result;
 }

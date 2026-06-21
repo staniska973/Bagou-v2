@@ -30,6 +30,14 @@ export const objectStorageClient = new Storage({
   projectId: "",
 });
 
+// An uploaded avatar object as enumerated by the reconciliation job: its
+// normalized `/objects/...` entity path plus the storage-reported creation
+// time (null when the backend doesn't report one).
+export interface UploadedAvatarObject {
+  path: string;
+  timeCreated: Date | null;
+}
+
 export class ObjectNotFoundError extends Error {
   constructor() {
     super("Object not found");
@@ -206,12 +214,14 @@ export class ObjectStorageService {
   }
 
   // Lists every uploaded avatar object currently in storage, returning their
-  // normalized `/objects/uploads/<userId>/...` entity paths. Used by the orphan
-  // reconciliation job to find files that no longer back a live user's avatar.
-  // Only enumerates the `uploads/` prefix, so unrelated private objects are
-  // never touched. The implicit "folder" placeholder (a zero-length object whose
-  // name equals the prefix) is filtered out.
-  async listUploadedAvatarPaths(): Promise<string[]> {
+  // normalized `/objects/uploads/<userId>/...` entity paths alongside the
+  // object's storage-reported creation time. Used by the orphan reconciliation
+  // job to find files that no longer back a live user's avatar — and to skip
+  // very recently uploaded files that may not be claimed yet. Only enumerates
+  // the `uploads/` prefix, so unrelated private objects are never touched. The
+  // implicit "folder" placeholder (a zero-length object whose name equals the
+  // prefix) is filtered out.
+  async listUploadedAvatarPaths(): Promise<UploadedAvatarObject[]> {
     let entityDir = this.getPrivateObjectDir();
     if (!entityDir.endsWith("/")) {
       entityDir = `${entityDir}/`;
@@ -221,9 +231,19 @@ export class ObjectStorageService {
     const bucket = objectStorageClient.bucket(bucketName);
     const [files] = await bucket.getFiles({ prefix: uploadsPrefix });
     return files
-      .map((file) => file.name)
-      .filter((name) => name.length > uploadsPrefix.length)
-      .map((name) => `/objects/${name.slice(privatePrefix.length)}`);
+      .filter((file) => file.name.length > uploadsPrefix.length)
+      .map((file) => {
+        // `timeCreated` is an RFC 3339 timestamp populated by the listing call;
+        // it is the authoritative object creation time from storage metadata,
+        // not a guess. Null when the backend omits it so callers can decide how
+        // to treat an unknown age.
+        const rawTimeCreated = file.metadata?.timeCreated;
+        const parsed = rawTimeCreated ? new Date(rawTimeCreated) : null;
+        return {
+          path: `/objects/${file.name.slice(privatePrefix.length)}`,
+          timeCreated: parsed && !isNaN(parsed.getTime()) ? parsed : null,
+        };
+      });
   }
 
   normalizeObjectEntityPath(

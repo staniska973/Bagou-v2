@@ -4,6 +4,8 @@ export {
   objectStorageClient,
 } from "./objectStorage";
 
+export type { UploadedAvatarObject } from "./objectStorage";
+
 export type {
   ObjectAclPolicy,
   ObjectAccessGroup,
