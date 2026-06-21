@@ -210,6 +210,21 @@ export const insertUsageEventSchema = createInsertSchema(usageEvents).omit({
   createdAt: true,
 });
 
+// One row per started vocal simulation (created by /api/session/opening, where
+// the weekly vocal quota is charged). The dialogue-turn endpoint claims turns
+// against it and closes it when the conversation concludes, so the signed token
+// can't be replayed to run extra conversations on a single charged start.
+export const vocalSessions = pgTable("vocal_sessions", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  cardId: varchar("card_id").notNull(),
+  status: text("status").notNull().default("open"),
+  turnCount: integer("turn_count").notNull().default(0),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export type VocalSession = typeof vocalSessions.$inferSelect;
+
 export type UserProfile = typeof userProfiles.$inferSelect;
 export type InsertUserProfile = z.infer<typeof insertUserProfileSchema>;
 

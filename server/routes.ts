@@ -8,7 +8,7 @@ import { insertUserProfileSchema, insertSessionEventSchema, interlocutorGenderEn
 import { z } from "zod";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { quotaGuard } from "./subscription";
-import { signVocalSession, verifyVocalSession } from "./sessionToken";
+import { startVocalSession, claimVocalTurn, closeVocalSession } from "./vocalSession";
 
 declare module "express-session" {
   interface SessionData {
@@ -1087,9 +1087,10 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       ]);
       // Persona objective/tactics are hidden — keep server-side, never send to client.
       setPersona(personaKey(profileId ?? "anon", cardId, gender), persona);
-      // Mint a signed token proving this metered session start; dialogue-turn
-      // requires it so the continuation can't be called without charging quota.
-      const sessionToken = signVocalSession({ userId: (req as any).user.claims.sub, cardId });
+      // Create one metered session row and return a signed token for it. dialogue-turn
+      // claims turns against this row and refuses once the conversation is closed, so a
+      // free user can't reuse one charged start to run extra conversations.
+      const sessionToken = await startVocalSession((req as any).user.claims.sub, cardId);
       res.json({ openingLine, sessionToken });
     } catch (error) {
       console.error("Error generating opening line:", error);
@@ -1105,12 +1106,13 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
         return res.status(400).json({ error: "Missing required fields" });
       }
 
-      // Bind the continuation to a metered session start. The token is minted by
-      // /api/session/opening, where the weekly vocal quota is charged. Without it
-      // an authenticated free user could call this endpoint directly and bypass
-      // the limit. HMAC-signed, so it survives a mid-session server restart.
+      // Claim a turn against the metered session row created by /api/session/opening
+      // (where the weekly vocal quota is charged). This rejects a replayed token once
+      // its conversation has closed, so a free user can't run extra conversations on a
+      // single charged start. State lives in the DB row, so it survives a restart.
       const userId = (req as any).user.claims.sub as string;
-      if (!verifyVocalSession(req.body.sessionToken, { userId, cardId })) {
+      const claim = await claimVocalTurn(req.body.sessionToken, { userId, cardId });
+      if (!claim) {
         return res.status(403).json({ error: "Invalid or expired session" });
       }
 
@@ -1144,12 +1146,15 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
         setPersona(pKey, persona);
       }
 
+      // Use the server-tracked turn count so a client can't dodge the turn cap by
+      // replaying a low turnNumber; still honor an explicit over-time signal (999).
+      const effectiveTurn = Math.max(Number(turnNumber) || 1, claim.turnCount);
       const result = await generateDialogueTurnWithEval(
         profile,
         card,
         history || [],
         userMessage,
-        turnNumber || 1,
+        effectiveTurn,
         maxTurns,
         persona
       );
@@ -1157,6 +1162,12 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       if (isProposalRewrite && result.turnEval.score !== "strong") {
         result.turnEval.score = "strong";
         result.turnEval.comment = "Bien repris — tu as utilisé une des répliques proposées. C'est exactement ça.";
+      }
+
+      // Conversation over (AI concluded or the turn cap was reached): close the row
+      // so its token can't be replayed to start another conversation.
+      if (result.isFinalTurn || claim.turnCount >= maxTurns) {
+        await closeVocalSession(claim.sessionId);
       }
 
       res.json({ ...result, maxTurns });

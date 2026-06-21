@@ -1,13 +1,15 @@
 import crypto from "crypto";
 
 /**
- * Stateless, signed token proving that a metered vocal session was started via
+ * Signed token identifying the specific metered vocal session started via
  * `/api/session/opening` (where the weekly `vocal_session` quota is charged).
  *
- * `/api/session/dialogue-turn` requires a valid token so an authenticated free
- * user can't call the continuation endpoint directly and consume roleplay AI
- * without spending their quota. Being HMAC-signed (not server state) it survives
- * a mid-session server restart without re-charging the user.
+ * The token carries the `vocal_sessions` row id and is HMAC-signed so the client
+ * can't forge or point it at another session. `/api/session/dialogue-turn`
+ * verifies the signature and then claims a turn against that row (see
+ * `vocalSession.ts`), which is what actually prevents replay: once the row's
+ * conversation closes, the token is dead, so a free user can't reuse one charged
+ * start to run extra conversations.
  */
 
 const SECRET = process.env.SESSION_SECRET;
@@ -22,6 +24,7 @@ const MAX_AGE_MS = 60 * 60 * 1000;
 const CLOCK_SKEW_MS = 60 * 1000;
 
 interface VocalSessionPayload {
+  sessionId: number;
   userId: string;
   cardId: string;
   iat: number;
@@ -31,36 +34,47 @@ function hmac(body: string): string {
   return crypto.createHmac("sha256", SECRET).update(body).digest("base64url");
 }
 
-export function signVocalSession(claims: { userId: string; cardId: string }): string {
+export function signVocalSession(claims: {
+  sessionId: number;
+  userId: string;
+  cardId: string;
+}): string {
   const payload: VocalSessionPayload = { ...claims, iat: Date.now() };
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return `${body}.${hmac(body)}`;
 }
 
+/**
+ * Returns the signed session id when the token is valid for this user+card and
+ * not expired, otherwise `null`. The caller still has to load the matching
+ * `vocal_sessions` row to confirm it's open — the signature alone doesn't prove
+ * the conversation is still claimable.
+ */
 export function verifyVocalSession(
   token: unknown,
   expected: { userId: string; cardId: string },
-): boolean {
-  if (typeof token !== "string") return false;
+): number | null {
+  if (typeof token !== "string") return null;
   const [body, sig] = token.split(".");
-  if (!body || !sig) return false;
+  if (!body || !sig) return null;
 
   const expectedSig = hmac(body);
   const a = Buffer.from(sig);
   const b = Buffer.from(expectedSig);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
 
   let parsed: VocalSessionPayload;
   try {
     parsed = JSON.parse(Buffer.from(body, "base64url").toString());
   } catch {
-    return false;
+    return null;
   }
 
-  if (parsed.userId !== expected.userId) return false;
-  if (parsed.cardId !== expected.cardId) return false;
-  if (typeof parsed.iat !== "number") return false;
+  if (parsed.userId !== expected.userId) return null;
+  if (parsed.cardId !== expected.cardId) return null;
+  if (typeof parsed.sessionId !== "number" || !Number.isInteger(parsed.sessionId)) return null;
+  if (typeof parsed.iat !== "number") return null;
   const age = Date.now() - parsed.iat;
-  if (age > MAX_AGE_MS || age < -CLOCK_SKEW_MS) return false; // expired or issued in the future
-  return true;
+  if (age > MAX_AGE_MS || age < -CLOCK_SKEW_MS) return null; // expired or issued in the future
+  return parsed.sessionId;
 }
