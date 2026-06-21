@@ -17,6 +17,8 @@ export const toneEnum = ["classy_calm", "fun_teasing", "direct", "warm_empatheti
 export const riskLevelEnum = ["safe", "medium", "bold"] as const;
 export const interlocutorGenderEnum = ["femme", "homme"] as const;
 export type InterlocutorGender = (typeof interlocutorGenderEnum)[number];
+export const tuVousEnum = ["tu", "vous"] as const;
+export const formalityEnum = ["casual", "neutral", "formal"] as const;
 export const difficultyEnum = ["n1", "n2", "n3"] as const;
 export const ratingEnum = ["hard", "medium", "easy"] as const;
 export const themeIdEnum = ["SOCIAL", "PRO", "DAILY", "RELATIONNEL", "DIFFICULT", "STORY", "CULTURE_SOCIALE"] as const;
@@ -158,7 +160,16 @@ export const sessionEvents = pgTable("session_events", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
-export const insertUserProfileSchema = createInsertSchema(userProfiles).omit({
+export const insertUserProfileSchema = createInsertSchema(userProfiles, {
+  language: z.enum(languageEnum),
+  primaryMode: z.enum(modeEnum),
+  tonePrimary: z.enum(toneEnum),
+  toneSecondary: z.enum(toneEnum),
+  riskLevel: z.enum(riskLevelEnum),
+  interlocutorGender: z.enum(interlocutorGenderEnum),
+  tuVous: z.enum(tuVousEnum),
+  formality: z.enum(formalityEnum),
+}).omit({
   id: true,
   createdAt: true,
 });
