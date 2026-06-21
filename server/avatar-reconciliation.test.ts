@@ -213,6 +213,68 @@ async function run() {
     "default grace period should be one hour",
   );
 
+  // Case 10: dry-run preview NEVER deletes. This is the core guard behind the
+  // admin confirmation/preview flow: { dryRun: true } must report what WOULD be
+  // removed (the orphan count) without calling deleteObjectEntity at all.
+  reset();
+  const dryLive = "/objects/uploads/userI/keep";
+  const dryOrphan1 = "/objects/uploads/userI/orphan-1";
+  const dryOrphan2 = "/objects/uploads/userI/orphan-2";
+  liveRows = [{ customImageUrl: dryLive }];
+  setStoredPaths([dryLive, dryOrphan1, dryOrphan2]);
+  result = await reconcileOrphanedAvatars({ dryRun: true });
+  assert(
+    deleteCalls.length === 0,
+    `dry-run must NOT delete anything, got ${deleteCalls.length} delete call(s)`,
+  );
+  assert(
+    result.removed === 2,
+    `dry-run removed should report would-remove count (2), got ${result.removed}`,
+  );
+  assert(result.orphans === 2, `dry-run orphans should be 2, got ${result.orphans}`);
+  assert(result.scanned === 3, `dry-run scanned should be 3, got ${result.scanned}`);
+  assert(result.live === 1, `dry-run live should be 1, got ${result.live}`);
+
+  // Case 11: dry-run still honors the grace period — a freshly uploaded orphan
+  // is counted as skippedRecent (not as would-remove) and nothing is deleted.
+  reset();
+  const dryFresh = "/objects/uploads/userJ/just-uploaded";
+  const dryOld = "/objects/uploads/userJ/long-ago";
+  liveRows = [];
+  storedObjects = [
+    { path: dryFresh, timeCreated: new Date(NOW - 60 * 1000) }, // 1 min old
+    { path: dryOld, timeCreated: new Date(NOW - 2 * 60 * 60 * 1000) }, // 2h old
+  ];
+  result = await reconcileOrphanedAvatars({ dryRun: true, now: () => NOW });
+  assert(
+    deleteCalls.length === 0,
+    `dry-run with grace period must NOT delete, got ${deleteCalls.length}`,
+  );
+  assert(
+    result.skippedRecent === 1,
+    `dry-run skippedRecent should be 1, got ${result.skippedRecent}`,
+  );
+  assert(
+    result.removed === 1,
+    `dry-run should report only the old orphan as would-remove (1), got ${result.removed}`,
+  );
+
+  // Case 12: { dryRun: false } performs deletion exactly as the default does —
+  // the preview flag is the only thing gating the irreversible delete.
+  reset();
+  const wetOrphan = "/objects/uploads/userK/orphan";
+  liveRows = [];
+  setStoredPaths([wetOrphan]);
+  result = await reconcileOrphanedAvatars({ dryRun: false });
+  assert(
+    deleteCalls.includes(wetOrphan),
+    "dryRun:false must actually delete the orphan",
+  );
+  assert(
+    result.removed === 1,
+    `dryRun:false removed should be 1, got ${result.removed}`,
+  );
+
   if (failures > 0) {
     console.error(`\n${failures} assertion(s) failed.`);
     process.exit(1);
