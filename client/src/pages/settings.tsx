@@ -50,16 +50,42 @@ import { useTheme } from "@/components/theme-provider";
 import { useSubscription } from "@/hooks/use-subscription";
 import { useBilling, formatPrice, intervalLabel } from "@/hooks/use-billing";
 import type { UserProfile } from "@shared/schema";
-import { toneEnum, formalityEnum, modeEnum, riskLevelEnum, tuVousEnum } from "@shared/schema";
+import {
+  toneEnum,
+  formalityEnum,
+  modeEnum,
+  riskLevelEnum,
+  tuVousEnum,
+  themeIdEnum,
+  interlocutorGenderEnum,
+} from "@shared/schema";
 
-const OBJECTIVES: { key: string; label: string }[] = [
-  { key: "SOCIAL", label: "Social" },
-  { key: "PRO", label: "Pro" },
-  { key: "DAILY", label: "Quotidien" },
-  { key: "RELATIONNEL", label: "Relationnel" },
-  { key: "DIFFICULT", label: "Difficile" },
-  { key: "STORY", label: "Storytelling" },
-];
+type ObjectiveKey = Exclude<(typeof themeIdEnum)[number], "CULTURE_SOCIALE">;
+
+const OBJECTIVE_LABELS: Record<ObjectiveKey, string> = {
+  SOCIAL: "Social",
+  PRO: "Pro",
+  DAILY: "Quotidien",
+  RELATIONNEL: "Relationnel",
+  DIFFICULT: "Difficile",
+  STORY: "Storytelling",
+};
+
+const isUserObjective = (key: (typeof themeIdEnum)[number]): key is ObjectiveKey =>
+  key !== "CULTURE_SOCIALE";
+
+const OBJECTIVES: { key: ObjectiveKey; label: string }[] = themeIdEnum
+  .filter(isUserObjective)
+  .map((key) => ({ key, label: OBJECTIVE_LABELS[key] }));
+
+const INTERLOCUTOR_GENDER_LABELS: Record<(typeof interlocutorGenderEnum)[number], string> = {
+  femme: "Femme",
+  homme: "Homme",
+};
+const INTERLOCUTOR_GENDERS = interlocutorGenderEnum.map((value) => ({
+  value,
+  label: INTERLOCUTOR_GENDER_LABELS[value],
+}));
 
 const TONES = toneEnum;
 
@@ -465,10 +491,7 @@ export default function Settings() {
                 <Segmented
                   value={form.interlocutorGender}
                   testIdPrefix="button-gender"
-                  options={[
-                    { value: "femme", label: "Femme" },
-                    { value: "homme", label: "Homme" },
-                  ]}
+                  options={INTERLOCUTOR_GENDERS}
                   onChange={(v) => updateForm("interlocutorGender", v)}
                 />
               </Field>

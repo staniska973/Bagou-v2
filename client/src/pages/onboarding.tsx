@@ -12,12 +12,28 @@ import { getTranslations } from "@/lib/i18n";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
-import { toneEnum, riskLevelEnum, modeEnum, tuVousEnum } from "@shared/schema";
+import { toneEnum, riskLevelEnum, modeEnum, tuVousEnum, themeIdEnum } from "@shared/schema";
 import bagouIcon from "../assets/images/bagou-icon.png";
 
 const TOTAL_STEPS = 6;
 
-type ObjectiveKey = "SOCIAL" | "PRO" | "DAILY" | "RELATIONNEL" | "DIFFICULT" | "STORY";
+type ObjectiveKey = Exclude<(typeof themeIdEnum)[number], "CULTURE_SOCIALE">;
+
+const OBJECTIVE_LABELS: Record<ObjectiveKey, string> = {
+  SOCIAL: "Social",
+  PRO: "Pro",
+  DAILY: "Quotidien",
+  RELATIONNEL: "Relationnel",
+  DIFFICULT: "Difficile",
+  STORY: "Storytelling",
+};
+
+const isUserObjective = (key: (typeof themeIdEnum)[number]): key is ObjectiveKey =>
+  key !== "CULTURE_SOCIALE";
+
+const OBJECTIVES: { key: ObjectiveKey; label: string }[] = themeIdEnum
+  .filter(isUserObjective)
+  .map((key) => ({ key, label: OBJECTIVE_LABELS[key] }));
 
 interface OnboardingData {
   language: "fr" | "en";
@@ -65,14 +81,7 @@ export default function Onboarding() {
     },
   });
 
-  const objectives: { key: ObjectiveKey; label: string }[] = [
-    { key: "SOCIAL", label: "Social" },
-    { key: "PRO", label: "Pro" },
-    { key: "DAILY", label: "Quotidien" },
-    { key: "RELATIONNEL", label: "Relationnel" },
-    { key: "DIFFICULT", label: "Difficile" },
-    { key: "STORY", label: "Storytelling" },
-  ];
+  const objectives = OBJECTIVES;
 
   const tones = toneEnum;
 
