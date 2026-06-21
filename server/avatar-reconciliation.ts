@@ -19,6 +19,9 @@ export interface ReconcileOptions {
   gracePeriodMs?: number;
   // Injectable clock for testing.
   now?: () => number;
+  // When true, report what would be removed without deleting anything. Lets
+  // admins preview the impact before committing to an irreversible sweep.
+  dryRun?: boolean;
 }
 
 // Default grace period: ignore objects younger than one hour. Overridable per
@@ -87,6 +90,11 @@ export async function reconcileOrphanedAvatars(
       skippedRecent += 1;
       continue;
     }
+    // Dry run: count what would be removed without touching storage.
+    if (options.dryRun) {
+      removed += 1;
+      continue;
+    }
     try {
       const deleted = await objectStorageService.deleteObjectEntity(obj.path);
       if (deleted) {
@@ -110,8 +118,10 @@ export async function reconcileOrphanedAvatars(
     skippedRecent,
   };
   console.log(
-    `[avatar-reconcile] scanned=${result.scanned} live=${result.live} ` +
-      `orphans=${result.orphans} removed=${result.removed} ` +
+    `[avatar-reconcile]${options.dryRun ? " (dry-run)" : ""} ` +
+      `scanned=${result.scanned} live=${result.live} ` +
+      `orphans=${result.orphans} ` +
+      `${options.dryRun ? "wouldRemove" : "removed"}=${result.removed} ` +
       `skippedRecent=${result.skippedRecent}`,
   );
   return result;

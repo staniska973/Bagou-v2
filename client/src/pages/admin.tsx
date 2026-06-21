@@ -629,26 +629,38 @@ type AvatarReconcileResult = {
   live: number;
   orphans: number;
   removed: number;
+  dryRun?: boolean;
 };
 
 function AvatarCleanupCard() {
   const { toast } = useToast();
   const [result, setResult] = useState<AvatarReconcileResult | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const reconcile = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/admin/avatars/reconcile");
+    mutationFn: async (dryRun: boolean) => {
+      const res = await apiRequest("POST", "/api/admin/avatars/reconcile", { dryRun });
       return (await res.json()) as AvatarReconcileResult;
     },
     onSuccess: (data) => {
       setResult(data);
-      toast({
-        title: "Nettoyage terminé",
-        description:
-          data.removed > 0
-            ? `${data.removed} photo(s) orpheline(s) supprimée(s).`
-            : "Aucune photo orpheline à supprimer.",
-      });
+      if (data.dryRun) {
+        toast({
+          title: "Aperçu terminé",
+          description:
+            data.orphans > 0
+              ? `${data.orphans} photo(s) orpheline(s) seraient supprimée(s).`
+              : "Aucune photo orpheline détectée.",
+        });
+      } else {
+        toast({
+          title: "Nettoyage terminé",
+          description:
+            data.removed > 0
+              ? `${data.removed} photo(s) orpheline(s) supprimée(s).`
+              : "Aucune photo orpheline à supprimer.",
+        });
+      }
     },
     onError: (err: any) => {
       toast({
@@ -658,6 +670,8 @@ function AvatarCleanupCard() {
       });
     },
   });
+
+  const previewResult = result?.dryRun ? result : null;
 
   return (
     <Card>
@@ -673,41 +687,96 @@ function AvatarCleanupCard() {
           utilisateur (laissées par une panne de stockage, par exemple). Lancé automatiquement
           chaque jour — utilisez ce bouton pour forcer un passage immédiat.
         </p>
-        <Button
-          onClick={() => reconcile.mutate()}
-          disabled={reconcile.isPending}
-          data-testid="button-avatar-cleanup"
-        >
-          {reconcile.isPending ? (
-            <>
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-              Nettoyage en cours...
-            </>
-          ) : (
-            <>
-              <Trash2 className="w-4 h-4 mr-2" />
-              Nettoyer les photos orphelines
-            </>
-          )}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={() => reconcile.mutate(true)}
+            disabled={reconcile.isPending}
+            data-testid="button-avatar-preview"
+          >
+            {reconcile.isPending && reconcile.variables === true ? (
+              <>
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                Analyse en cours...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Aperçu (sans suppression)
+              </>
+            )}
+          </Button>
+
+          <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="destructive"
+                disabled={reconcile.isPending}
+                data-testid="button-avatar-cleanup"
+              >
+                {reconcile.isPending && reconcile.variables === false ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Nettoyage en cours...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Nettoyer les photos orphelines
+                  </>
+                )}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent data-testid="dialog-avatar-cleanup-confirm">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Supprimer les photos orphelines ?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {previewResult
+                    ? `D'après le dernier aperçu, ${previewResult.orphans} photo(s) orpheline(s) seraient supprimée(s) définitivement. Cette action est irréversible.`
+                    : "Cette action supprime définitivement les photos de profil orphelines. Elle est irréversible. Lancez d'abord un aperçu pour vérifier le nombre de photos concernées."}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="button-avatar-cleanup-cancel">
+                  Annuler
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => reconcile.mutate(false)}
+                  data-testid="button-avatar-cleanup-confirm"
+                >
+                  Supprimer définitivement
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
 
         {result && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" data-testid="avatar-cleanup-result">
-            <div className="rounded-lg border p-3">
-              <p className="text-xs text-muted-foreground">Analysées</p>
-              <p className="text-lg font-semibold" data-testid="text-avatar-scanned">{result.scanned}</p>
-            </div>
-            <div className="rounded-lg border p-3">
-              <p className="text-xs text-muted-foreground">Actives</p>
-              <p className="text-lg font-semibold" data-testid="text-avatar-live">{result.live}</p>
-            </div>
-            <div className="rounded-lg border p-3">
-              <p className="text-xs text-muted-foreground">Orphelines</p>
-              <p className="text-lg font-semibold" data-testid="text-avatar-orphans">{result.orphans}</p>
-            </div>
-            <div className="rounded-lg border p-3">
-              <p className="text-xs text-muted-foreground">Supprimées</p>
-              <p className="text-lg font-semibold text-emerald-600" data-testid="text-avatar-removed">{result.removed}</p>
+          <div className="space-y-2" data-testid="avatar-cleanup-result">
+            {result.dryRun && (
+              <p className="text-xs font-medium text-amber-600 dark:text-amber-400" data-testid="text-avatar-dryrun-notice">
+                Aperçu — aucune photo n'a été supprimée.
+              </p>
+            )}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Analysées</p>
+                <p className="text-lg font-semibold" data-testid="text-avatar-scanned">{result.scanned}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Actives</p>
+                <p className="text-lg font-semibold" data-testid="text-avatar-live">{result.live}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Orphelines</p>
+                <p className="text-lg font-semibold" data-testid="text-avatar-orphans">{result.orphans}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">
+                  {result.dryRun ? "À supprimer" : "Supprimées"}
+                </p>
+                <p className="text-lg font-semibold text-emerald-600" data-testid="text-avatar-removed">{result.removed}</p>
+              </div>
             </div>
           </div>
         )}
