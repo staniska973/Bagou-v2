@@ -7,6 +7,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ParcoursCard } from "./card-step";
 import type { InterlocutorGender } from "@shared/schema";
 import { CelebrationRings, pickOralEncouragement } from "./session-ui";
+import { usePaywall } from "@/components/paywall-provider";
+import { parseQuotaError } from "@/lib/quota";
 
 export interface GlobalDynamic {
   feedback: string;
@@ -33,6 +35,7 @@ export function VocalStep({
   isLast?: boolean;
   onComplete: (gd: GlobalDynamic | null, transcript: string) => void;
 }) {
+  const { showPaywall } = usePaywall();
   const [phase, setPhase] = useState<Phase>("intro");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [elapsed, setElapsed] = useState(0);
@@ -394,6 +397,7 @@ export function VocalStep({
       await persistGender(gender);
 
       let opening = "";
+      let quotaBlocked: ReturnType<typeof parseQuotaError> = null;
       try {
         const r = await apiRequest("POST", "/api/session/opening", {
           cardId: card.cardId,
@@ -401,8 +405,19 @@ export function VocalStep({
           interlocutorGender: gender,
         });
         opening = (await r.json()).openingLine || "";
-      } catch {
-        /* ignore */
+      } catch (err) {
+        quotaBlocked = parseQuotaError(err);
+      }
+
+      if (quotaBlocked) {
+        // Free weekly vocal quota reached: tear the session back down to the
+        // intro screen and surface the upgrade prompt instead of starting.
+        stopTimer();
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        setPhase("intro");
+        showPaywall(quotaBlocked);
+        return;
       }
 
       if (opening) {
@@ -414,7 +429,7 @@ export function VocalStep({
     } finally {
       startingRef.current = false;
     }
-  }, [card.cardId, profileId, gender, persistGender, ensureStream, setupAnalyser, playTts, startListening]);
+  }, [card.cardId, profileId, gender, persistGender, ensureStream, setupAnalyser, playTts, startListening, showPaywall]);
 
   const timerPct = Math.min((elapsed / SESSION_SECONDS) * 100, 100);
   // While it's the user's turn but a replay clip is playing, the live mic is

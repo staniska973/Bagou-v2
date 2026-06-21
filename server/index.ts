@@ -3,6 +3,9 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
+import { registerStripeRoutes } from "./stripeRoutes";
+import { initStripe } from "./stripeInit";
+import { WebhookHandlers } from "./webhookHandlers";
 
 const app = express();
 const httpServer = createServer(app);
@@ -12,6 +15,34 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+// Stripe webhook MUST be registered with a raw body parser BEFORE express.json,
+// otherwise the signature verification fails (it needs the unparsed Buffer).
+app.post(
+  "/api/stripe/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const signature = req.headers["stripe-signature"];
+    if (!signature) {
+      return res.status(400).json({ error: "Missing stripe-signature" });
+    }
+    try {
+      const sig = Array.isArray(signature) ? signature[0] : signature;
+      if (!Buffer.isBuffer(req.body)) {
+        console.error(
+          "STRIPE WEBHOOK ERROR: req.body is not a Buffer. Ensure this route is " +
+            "registered BEFORE express.json().",
+        );
+        return res.status(500).json({ error: "Webhook processing error" });
+      }
+      await WebhookHandlers.processWebhook(req.body as Buffer, sig);
+      res.status(200).json({ received: true });
+    } catch (error: any) {
+      console.error("Webhook error:", error?.message || error);
+      res.status(400).json({ error: "Webhook processing error" });
+    }
+  },
+);
 
 app.use(
   express.json({
@@ -63,8 +94,15 @@ app.use((req, res, next) => {
 (async () => {
   await setupAuth(app);
   registerAuthRoutes(app);
+  registerStripeRoutes(app);
 
   await registerRoutes(httpServer, app);
+
+  // Initialise Stripe sync (schema migrations, managed webhook, backfill).
+  // Non-fatal: if Stripe isn't connected yet the app still runs on the free tier.
+  initStripe().catch((err) =>
+    console.error("Stripe initialisation skipped:", err?.message || err),
+  );
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

@@ -23,6 +23,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest } from "@/lib/queryClient";
+import { usePaywall } from "@/components/paywall-provider";
+import { parseQuotaError } from "@/lib/quota";
 
 export type Rating = "hard" | "medium" | "easy";
 
@@ -92,6 +94,7 @@ export function CardStep({
   sessionId: number | null;
   onRated: (rating: Rating, oneFix: string, userAnswer: string, modelAnswer: string) => void;
 }) {
+  const { showPaywall } = usePaywall();
   const [phase, setPhase] = useState<Phase>("formulate");
   const [userAnswer, setUserAnswer] = useState("");
   const [result, setResult] = useState<AnswerResult | null>(null);
@@ -190,11 +193,13 @@ export function CardStep({
         const data: AnswerResult = await res.json();
         setResult(data);
         setPhase("reveal");
-      } catch {
+      } catch (err) {
+        const quota = parseQuotaError(err);
+        if (quota) showPaywall(quota);
         setPhase("formulate");
       }
     },
-    [phase, userAnswer, profileId, card.cardId],
+    [phase, userAnswer, profileId, card.cardId, showPaywall],
   );
 
   const rate = async (rating: Rating) => {

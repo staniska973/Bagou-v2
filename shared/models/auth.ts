@@ -18,8 +18,13 @@ export const users = pgTable("users", {
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
   isAdmin: boolean("is_admin").notNull().default(false),
+  // Manual admin override (comp/grant), independent of Stripe.
   subscriptionStatus: varchar("subscription_status").notNull().default("none"),
   subscriptionExpiresAt: timestamp("subscription_expires_at"),
+  // Link to Stripe. Stripe remains the source of truth for paid status; we only
+  // store the ids here and read the synced `stripe` schema for live status.
+  stripeCustomerId: varchar("stripe_customer_id"),
+  stripeSubscriptionId: varchar("stripe_subscription_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

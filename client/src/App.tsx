@@ -8,6 +8,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { LanguageToggle } from "@/components/language-toggle";
 import { useAuth } from "@/hooks/use-auth";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaywallProvider } from "@/components/paywall-provider";
+import { SubscriptionBadge } from "@/components/subscription-badge";
 
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
@@ -18,6 +20,7 @@ import Cards from "@/pages/cards";
 import Vocal from "@/pages/vocal";
 import Stats from "@/pages/stats";
 import Admin from "@/pages/admin";
+import Pricing from "@/pages/pricing";
 
 function AuthenticatedRouter() {
   return (
@@ -27,6 +30,7 @@ function AuthenticatedRouter() {
       <Route path="/cards" component={Cards} />
       <Route path="/vocal" component={Vocal} />
       <Route path="/stats" component={Stats} />
+      <Route path="/abonnement" component={Pricing} />
       <Route path="/admin" component={Admin} />
       <Route path="/" component={Home} />
       <Route component={NotFound} />
@@ -35,12 +39,13 @@ function AuthenticatedRouter() {
 }
 
 function AppHeader() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
 
   if (!user) return null;
 
   return (
     <header className="fixed top-0 right-0 z-50 p-3 flex items-center gap-2">
+      <SubscriptionBadge />
       <LanguageToggle />
       <ThemeToggle />
     </header>
@@ -66,10 +71,10 @@ function AppContent() {
   }
 
   return (
-    <>
+    <PaywallProvider>
       <AppHeader />
       <AuthenticatedRouter />
-    </>
+    </PaywallProvider>
   );
 }
 

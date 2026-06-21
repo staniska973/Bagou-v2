@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, serial, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -188,6 +188,28 @@ export const insertSessionEventSchema = createInsertSchema(sessionEvents).omit({
   createdAt: true,
 });
 
+// AI-consuming actions metered for quota enforcement and usage reporting.
+// "flashcard" = one card model-answer generation; "vocal_session" = one vocal
+// simulation started.
+export const usageTypeEnum = ["flashcard", "vocal_session"] as const;
+export type UsageType = (typeof usageTypeEnum)[number];
+
+export const usageEvents = pgTable(
+  "usage_events",
+  {
+    id: serial("id").primaryKey(),
+    userId: varchar("user_id").notNull(),
+    type: text("type").notNull(),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [index("IDX_usage_user_created").on(table.userId, table.createdAt)]
+);
+
+export const insertUsageEventSchema = createInsertSchema(usageEvents).omit({
+  id: true,
+  createdAt: true,
+});
+
 export type UserProfile = typeof userProfiles.$inferSelect;
 export type InsertUserProfile = z.infer<typeof insertUserProfileSchema>;
 
@@ -205,6 +227,9 @@ export type InsertTrainingSession = z.infer<typeof insertTrainingSessionSchema>;
 
 export type SessionEvent = typeof sessionEvents.$inferSelect;
 export type InsertSessionEvent = z.infer<typeof insertSessionEventSchema>;
+
+export type UsageEvent = typeof usageEvents.$inferSelect;
+export type InsertUsageEvent = z.infer<typeof insertUsageEventSchema>;
 
 export { conversations, messages } from "./models/chat";
 export type { Conversation, Message, InsertConversation, InsertMessage } from "./models/chat";

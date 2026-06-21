@@ -7,6 +7,7 @@ import { speechToText, ensureCompatibleFormat, textToSpeech } from "./replit_int
 import { insertUserProfileSchema, insertSessionEventSchema, interlocutorGenderEnum } from "@shared/schema";
 import { z } from "zod";
 import { isAuthenticated } from "./replit_integrations/auth";
+import { quotaGuard } from "./subscription";
 
 declare module "express-session" {
   interface SessionData {
@@ -295,7 +296,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.post("/api/flashcards/generate-answer", async (req, res) => {
+  app.post("/api/flashcards/generate-answer", isAuthenticated, quotaGuard("flashcard"), async (req, res) => {
     try {
       const { profileId, cardId, userAnswer } = req.body;
 
@@ -1063,7 +1064,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
-  app.post("/api/session/opening", async (req, res) => {
+  app.post("/api/session/opening", isAuthenticated, quotaGuard("vocal_session"), async (req, res) => {
     try {
       const { cardId, profileId } = req.body;
       if (!cardId) return res.status(400).json({ error: "Missing cardId" });
