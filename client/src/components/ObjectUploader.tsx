@@ -5,7 +5,10 @@ import type { UppyFile, UploadResult } from "@uppy/core";
 import DashboardModal from "@uppy/react/dashboard-modal";
 import "@uppy/core/css/style.min.css";
 import "@uppy/dashboard/css/style.min.css";
+import "@uppy/image-editor/css/style.min.css";
 import AwsS3 from "@uppy/aws-s3";
+import ImageEditor from "@uppy/image-editor";
+import Compressor from "@uppy/compressor";
 import { Button } from "@/components/ui/button";
 
 interface ObjectUploaderProps {
@@ -76,6 +79,34 @@ export function ObjectUploader({
       },
       autoProceed: false,
     })
+      .use(ImageEditor, {
+        quality: 0.9,
+        cropperOptions: {
+          aspectRatio: 1,
+          viewMode: 1,
+          background: false,
+          autoCropArea: 1,
+          responsive: true,
+          croppedCanvasOptions: {},
+        },
+        actions: {
+          revert: true,
+          rotate: true,
+          granularRotate: false,
+          flip: false,
+          zoomIn: true,
+          zoomOut: true,
+          cropSquare: false,
+          cropWidescreen: false,
+          cropWidescreenVertical: false,
+        },
+      })
+      .use(Compressor, {
+        maxWidth: 512,
+        maxHeight: 512,
+        quality: 0.8,
+        convertSize: 0,
+      })
       .use(AwsS3, {
         shouldUseMultipart: false,
         getUploadParameters: onGetUploadParameters,
@@ -96,6 +127,7 @@ export function ObjectUploader({
         open={showModal}
         onRequestClose={() => setShowModal(false)}
         proudlyDisplayPoweredByUppy={false}
+        autoOpen="imageEditor"
       />
     </div>
   );
