@@ -2,6 +2,7 @@ import express from "express";
 import { createServer } from "http";
 import type { AddressInfo } from "net";
 import { authStorage } from "./replit_integrations/auth";
+import { ObjectStorageService } from "./replit_integrations/object_storage";
 import { __setStripeClientFactoryForTests } from "./stripeClient";
 import { db } from "./db";
 import { users, userProfiles, usageEvents, vocalSessions } from "@shared/schema";
@@ -19,16 +20,22 @@ import { registerRoutes } from "./routes";
  * handler over HTTP. Only the external seams are mocked:
  *   - Stripe: via the `__setStripeClientFactoryForTests` injection hook, so no
  *     connector lookup or network call happens.
+ *   - Object storage: `ObjectStorageService.prototype.deleteObjectEntity` is
+ *     stubbed to record which avatar paths the route asked storage to remove,
+ *     so no real bucket is touched.
  *   - The user lookup (`authStorage.getUser`) and the local-delete transaction
  *     (`db.transaction`) are stubbed so no real DB is touched.
  * The real routing, auth guard, Stripe-cancel ordering and 502 abort all run.
  *
- * The two behaviours the route guarantees and we assert here:
+ * The behaviours the route guarantees and we assert here:
  *   1. Any still-billable Stripe subscription is cancelled BEFORE a single local
  *      row is removed.
  *   2. If the Stripe cancel call throws, the route returns 502 and deletes
  *      NOTHING locally (no transaction, so the user keeps their account + portal
  *      access instead of being wiped while still billed).
+ *   3. A user's uploaded avatar object is removed from storage when their
+ *      account is deleted, and the deletion is best-effort (a storage failure
+ *      must NOT block the account deletion itself).
  */
 
 let failures = 0;
@@ -76,6 +83,21 @@ let events: Event[] = [];
     }),
   };
   return cb(tx);
+};
+
+// Stub object-storage deletion so no real bucket is touched. We record every
+// avatar path the route asked storage to remove, and can force a failure to
+// prove the cleanup is best-effort (must not block the account deletion).
+let deletedAvatarPaths: string[] = [];
+let avatarDeleteShouldThrow = false;
+ObjectStorageService.prototype.deleteObjectEntity = async function (
+  path: string,
+) {
+  if (avatarDeleteShouldThrow) {
+    throw new Error("simulated object-storage outage");
+  }
+  deletedAvatarPaths.push(path);
+  return true;
 };
 
 // Build a fake Stripe client whose subscription list / cancel behaviour is
@@ -272,6 +294,86 @@ async function run() {
       assert(
         deletedTables.includes("users") && deletedTables.includes("userProfiles"),
         `free delete should still clear local rows, got ${JSON.stringify(deletedTables)}`,
+      );
+    }
+
+    // 4. User with an uploaded avatar: deleting the account removes the avatar
+    //    object from storage, and the local rows are still cleared.
+    {
+      const userId = "avatar-user-1";
+      const avatarPath = `/objects/uploads/${encodeURIComponent(userId)}/img-abc`;
+      fakeUsers[userId] = {
+        id: userId,
+        stripeCustomerId: null,
+        customImageUrl: avatarPath,
+      };
+      cancelShouldThrow = false;
+      avatarDeleteShouldThrow = false;
+      deletedAvatarPaths = [];
+      events = [];
+
+      const r = await call(base, "DELETE", "/api/account", { user: userId });
+      assert(r.status === 200, `avatar delete should be 200, got ${r.status}`);
+      assert(
+        deletedAvatarPaths.includes(avatarPath),
+        `account deletion should remove the avatar object ${avatarPath}, got ${JSON.stringify(deletedAvatarPaths)}`,
+      );
+      const deletedTables = events
+        .filter((e): e is { kind: "delete"; table: string } => e.kind === "delete")
+        .map((e) => e.table);
+      assert(
+        deletedTables.includes("users"),
+        "avatar delete should still clear local rows",
+      );
+    }
+
+    // 5. No avatar set: storage deletion is skipped entirely (nothing to remove).
+    {
+      const userId = "no-avatar-user";
+      fakeUsers[userId] = {
+        id: userId,
+        stripeCustomerId: null,
+        customImageUrl: null,
+      };
+      cancelShouldThrow = false;
+      avatarDeleteShouldThrow = false;
+      deletedAvatarPaths = [];
+      events = [];
+
+      const r = await call(base, "DELETE", "/api/account", { user: userId });
+      assert(r.status === 200, `no-avatar delete should be 200, got ${r.status}`);
+      assert(
+        deletedAvatarPaths.length === 0,
+        `no avatar => no storage delete, got ${JSON.stringify(deletedAvatarPaths)}`,
+      );
+    }
+
+    // 6. Best-effort cleanup: if storage deletion throws, the account is STILL
+    //    deleted (an orphaned file beats leaving a paying/undeleted account).
+    {
+      const userId = "avatar-user-2";
+      const avatarPath = `/objects/uploads/${encodeURIComponent(userId)}/img-boom`;
+      fakeUsers[userId] = {
+        id: userId,
+        stripeCustomerId: null,
+        customImageUrl: avatarPath,
+      };
+      cancelShouldThrow = false;
+      avatarDeleteShouldThrow = true;
+      deletedAvatarPaths = [];
+      events = [];
+
+      const r = await call(base, "DELETE", "/api/account", { user: userId });
+      assert(
+        r.status === 200,
+        `storage failure must not block account delete, got ${r.status}`,
+      );
+      const deletedTables = events
+        .filter((e): e is { kind: "delete"; table: string } => e.kind === "delete")
+        .map((e) => e.table);
+      assert(
+        deletedTables.includes("users"),
+        "account rows must still be cleared even when avatar delete throws",
       );
     }
   } finally {
