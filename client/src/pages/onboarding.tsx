@@ -12,6 +12,7 @@ import { getTranslations } from "@/lib/i18n";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
+import { toneEnum, riskLevelEnum, modeEnum, tuVousEnum } from "@shared/schema";
 import bagouIcon from "../assets/images/bagou-icon.png";
 
 const TOTAL_STEPS = 6;
@@ -73,7 +74,7 @@ export default function Onboarding() {
     { key: "STORY", label: "Storytelling" },
   ];
 
-  const tones = ["classy_calm", "fun_teasing", "direct", "warm_empathetic", "minimalist"] as const;
+  const tones = toneEnum;
 
   const toggleObjective = (obj: ObjectiveKey) => {
     setData((prev) => ({
@@ -223,7 +224,7 @@ export default function Onboarding() {
               {step === 4 && (
                 <StepContainer title={t.onboarding.riskLevel.title} description={t.onboarding.riskLevel.description}>
                   <div className="space-y-3">
-                    {(["safe", "medium", "bold"] as const).map((level) => {
+                    {riskLevelEnum.map((level) => {
                       const label = t.onboarding.riskLevel[level];
                       const desc = t.onboarding.riskLevel[`${level}Desc` as keyof typeof t.onboarding.riskLevel];
                       return (
@@ -258,7 +259,7 @@ export default function Onboarding() {
               {step === 5 && (
                 <StepContainer title={t.onboarding.mode.title} description={t.onboarding.mode.description}>
                   <div className="space-y-3">
-                    {(["text", "voice", "mixed"] as const).map((mode) => {
+                    {modeEnum.map((mode) => {
                       const label = t.onboarding.mode[mode];
                       const desc = t.onboarding.mode[`${mode}Desc` as keyof typeof t.onboarding.mode];
                       return (
@@ -335,7 +336,7 @@ export default function Onboarding() {
                     <div className="pt-4 border-t">
                       <Label className="mb-3 block">{t.onboarding.limits.tuVous}</Label>
                       <div className="flex gap-3">
-                        {(["tu", "vous"] as const).map((option) => (
+                        {tuVousEnum.map((option) => (
                           <Button
                             key={option}
                             variant={data.tuVous === option ? "default" : "outline"}

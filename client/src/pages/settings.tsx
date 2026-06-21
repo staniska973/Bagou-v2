@@ -50,6 +50,7 @@ import { useTheme } from "@/components/theme-provider";
 import { useSubscription } from "@/hooks/use-subscription";
 import { useBilling, formatPrice, intervalLabel } from "@/hooks/use-billing";
 import type { UserProfile } from "@shared/schema";
+import { toneEnum, formalityEnum, modeEnum, riskLevelEnum, tuVousEnum } from "@shared/schema";
 
 const OBJECTIVES: { key: string; label: string }[] = [
   { key: "SOCIAL", label: "Social" },
@@ -60,13 +61,14 @@ const OBJECTIVES: { key: string; label: string }[] = [
   { key: "STORY", label: "Storytelling" },
 ];
 
-const TONES = ["classy_calm", "fun_teasing", "direct", "warm_empathetic", "minimalist"] as const;
+const TONES = toneEnum;
 
-const FORMALITY: { value: string; label: string }[] = [
-  { value: "casual", label: "Détendu" },
-  { value: "neutral", label: "Neutre" },
-  { value: "formal", label: "Soutenu" },
-];
+const FORMALITY_LABELS: Record<(typeof formalityEnum)[number], string> = {
+  casual: "Détendu",
+  neutral: "Neutre",
+  formal: "Soutenu",
+};
+const FORMALITY = formalityEnum.map((value) => ({ value, label: FORMALITY_LABELS[value] }));
 
 const SESSION_MINUTES = [5, 10, 12, 15, 20, 30];
 
@@ -412,11 +414,7 @@ export default function Settings() {
                 <Segmented
                   value={form.primaryMode}
                   testIdPrefix="button-mode"
-                  options={[
-                    { value: "text", label: t.onboarding.mode.text },
-                    { value: "voice", label: t.onboarding.mode.voice },
-                    { value: "mixed", label: t.onboarding.mode.mixed },
-                  ]}
+                  options={modeEnum.map((value) => ({ value, label: t.onboarding.mode[value] }))}
                   onChange={(v) => updateForm("primaryMode", v)}
                 />
               </Field>
@@ -458,11 +456,7 @@ export default function Settings() {
                 <Segmented
                   value={form.riskLevel}
                   testIdPrefix="button-risk"
-                  options={[
-                    { value: "safe", label: t.onboarding.riskLevel.safe },
-                    { value: "medium", label: t.onboarding.riskLevel.medium },
-                    { value: "bold", label: t.onboarding.riskLevel.bold },
-                  ]}
+                  options={riskLevelEnum.map((value) => ({ value, label: t.onboarding.riskLevel[value] }))}
                   onChange={(v) => updateForm("riskLevel", v)}
                 />
               </Field>
@@ -483,10 +477,7 @@ export default function Settings() {
                 <Segmented
                   value={form.tuVous}
                   testIdPrefix="button-tuvous"
-                  options={[
-                    { value: "tu", label: t.onboarding.limits.tu },
-                    { value: "vous", label: t.onboarding.limits.vous },
-                  ]}
+                  options={tuVousEnum.map((value) => ({ value, label: t.onboarding.limits[value] }))}
                   onChange={(v) => updateForm("tuVous", v)}
                 />
               </Field>
