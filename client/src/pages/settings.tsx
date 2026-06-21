@@ -56,27 +56,9 @@ import {
   modeEnum,
   riskLevelEnum,
   tuVousEnum,
-  themeIdEnum,
   interlocutorGenderEnum,
 } from "@shared/schema";
-
-type ObjectiveKey = Exclude<(typeof themeIdEnum)[number], "CULTURE_SOCIALE">;
-
-const OBJECTIVE_LABELS: Record<ObjectiveKey, string> = {
-  SOCIAL: "Social",
-  PRO: "Pro",
-  DAILY: "Quotidien",
-  RELATIONNEL: "Relationnel",
-  DIFFICULT: "Difficile",
-  STORY: "Storytelling",
-};
-
-const isUserObjective = (key: (typeof themeIdEnum)[number]): key is ObjectiveKey =>
-  key !== "CULTURE_SOCIALE";
-
-const OBJECTIVES: { key: ObjectiveKey; label: string }[] = themeIdEnum
-  .filter(isUserObjective)
-  .map((key) => ({ key, label: OBJECTIVE_LABELS[key] }));
+import { OBJECTIVES } from "@/lib/objectives";
 
 const INTERLOCUTOR_GENDER_LABELS: Record<(typeof interlocutorGenderEnum)[number], string> = {
   femme: "Femme",
