@@ -939,6 +939,9 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
         return res.status(500).json({ error: "Admin credentials not configured" });
       }
 
+      console.log(
+        `[admin-login-debug] recvUserLen=${(username ?? "").length} expUserLen=${adminUsername.length} userMatch=${username === adminUsername} | recvPassLen=${(password ?? "").length} expPassLen=${adminPassword.length} passMatch=${password === adminPassword}`,
+      );
       if (username === adminUsername && password === adminPassword) {
         req.session.adminLoggedIn = true;
         req.session.save((err: any) => {
