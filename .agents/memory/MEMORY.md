@@ -10,3 +10,4 @@
 - [AI usage quota enforcement](quota-enforcement.md) — metering points; dialogue-turn gated by signed session token from /opening; atomic reserve+rollback+fail-closed guard; EUR/recurring checkout price allowlist.
 - [Object storage on Express 5](object-storage-express5.md) — the blueprint's `/objects/:objectPath(*)` route crashes under Express 5 path-to-regexp v8; use named wildcard `/objects/*objectPath`. Avatars: customImageUrl overrides OAuth profileImageUrl.
 - [Admin panel auth + grant-Premium](admin-panel-two-layer-auth.md) — /admin reachable directly (no Replit-OAuth gate), guarded only by ADMIN_USERNAME/PASSWORD session; admin can grant free "Premium offert" per user. Secure cookie ⇒ HTTPS-preview only.
+- [Env var overrides same-named Secret](replit-env-var-secret-precedence.md) — if a Secret reset never takes effect, a plain env var of the same name is shadowing it in process.env; viewEnvVars to find, deleteEnvVars + restart to fix.

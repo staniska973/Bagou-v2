@@ -61,8 +61,6 @@ integrations = ["javascript_openai_ai_integrations:2.0.0", "javascript_log_in_wi
 [userenv.shared]
 SCORING_MODEL = "gemini"
 GENERATION_MODEL = "gpt"
-ADMIN_USERNAME = "bagou_admin"
-ADMIN_PASSWORD = "Bagou2024!"
 
 [postMerge]
 path = "scripts/post-merge.sh"
