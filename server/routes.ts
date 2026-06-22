@@ -1,13 +1,14 @@
 import type { Express } from "express";
 import type { Server } from "http";
+import { randomUUID } from "crypto";
 import multer from "multer";
 import { storage } from "./storage";
-import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, generateScenePersona, generateDashboardAnalysis, updateAIRuntimeConfig, getAIRuntimeConfig, type DashboardAnalysis, type ScenePersona } from "./ai";
+import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, generateScenePersona, generateDashboardAnalysis, generateCustomIntakeTurn, updateAIRuntimeConfig, getAIRuntimeConfig, type DashboardAnalysis, type ScenePersona } from "./ai";
 import { speechToText, ensureCompatibleFormat, textToSpeech } from "./replit_integrations/audio/client";
-import { insertUserProfileSchema, insertSessionEventSchema, interlocutorGenderEnum } from "@shared/schema";
+import { insertUserProfileSchema, insertSessionEventSchema, interlocutorGenderEnum, type InsertMotherCard } from "@shared/schema";
 import { z } from "zod";
 import { isAuthenticated } from "./replit_integrations/auth";
-import { quotaGuard } from "./subscription";
+import { quotaGuard, getEffectiveAccess } from "./subscription";
 import { startVocalSession, claimVocalTurn, closeVocalSession } from "./vocalSession";
 import { listClients, getClientDetail, getKpis } from "./adminAnalytics";
 
@@ -22,9 +23,68 @@ function isAdminSession(req: any, res: any, next: any) {
   return res.status(401).json({ error: "Admin authentication required" });
 }
 
+// Gate for the premium-only "Mode personnalisé". Must run AFTER isAuthenticated.
+// Reuses the existing access tier (Stripe/admin override) — never touches Stripe
+// directly. Fails closed (503) if the tier can't be resolved.
+async function requirePremium(req: any, res: any, next: any) {
+  const userId = req.user?.claims?.sub;
+  if (!userId) return res.status(401).json({ error: "Authentication required" });
+  try {
+    const { unlimited } = await getEffectiveAccess(userId);
+    if (!unlimited) {
+      return res.status(403).json({
+        error: "premium_required",
+        code: "PREMIUM_REQUIRED",
+        message:
+          "Le Mode personnalisé est réservé aux abonnés Premium. Passe en Premium pour créer et t'entraîner sur tes propres situations.",
+      });
+    }
+    next();
+  } catch (e) {
+    console.error("requirePremium failed:", e);
+    return res.status(503).json({ error: "Service momentanément indisponible. Réessaie dans un instant." });
+  }
+}
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const genderSchema = z.enum(interlocutorGenderEnum);
+
+// --- "Mode personnalisé" request validation ---------------------------------
+// User-typed intake content is DATA, never instructions (the AI layer is also
+// hardened); we still clamp sizes here as the first line of defense.
+const intakeMessageSchema = z.object({
+  role: z.enum(["bagou", "user"]),
+  content: z.string().min(1).max(2000),
+});
+
+const intakeTurnBodySchema = z.object({
+  transcript: z.array(intakeMessageSchema).max(40),
+  profileId: z.union([z.number(), z.string()]).optional(),
+});
+
+// The narrative draft Bagou produces; the server adds theme/pack/language and
+// other engine defaults when persisting it as a mother_cards row.
+const customCardDraftSchema = z.object({
+  customTitle: z.string().min(1).max(80),
+  situation: z.string().min(1).max(2000),
+  speakerRole: z.string().max(120).default("Toi"),
+  otherRole: z.string().max(120).default("Ton interlocuteur"),
+  relationship: z.string().max(300).default(""),
+  stakes: z.string().max(400).default(""),
+  userGoal: z.string().min(1).max(400),
+  intent: z.string().max(160).default("affirmation de soi"),
+  targetVibe: z.string().max(300).default("clair, posé, assertif"),
+  constraints: z.array(z.string().max(300)).max(8).default([]),
+  tags: z.array(z.string().max(60)).max(10).default([]),
+  antiPatterns: z.array(z.string().max(200)).max(8).default([]),
+  openingLine: z.string().max(400).default(""),
+});
+
+const saveCustomCardBodySchema = z.object({
+  profileId: z.union([z.number(), z.string()]),
+  draft: customCardDraftSchema,
+});
 
 const dashboardAnalysisCache = new Map<string, { sig: string; data: DashboardAnalysis }>();
 
@@ -221,7 +281,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       if (!userId) return res.status(401).json({ error: "Authentication required" });
 
       const { db: dbModule } = await import("./db");
-      const { users, userProfiles, usageEvents, vocalSessions } = await import("@shared/schema");
+      const { users, userProfiles, usageEvents, vocalSessions, motherCards } = await import("@shared/schema");
       const { eq } = await import("drizzle-orm");
       const { authStorage } = await import("./replit_integrations/auth");
 
@@ -266,7 +326,11 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
 
       // 3. Remove all local data for this user.
       await dbModule.transaction(async (tx: any) => {
+        // Deleting the user's profiles cascades their srs_states (including those
+        // pointing at custom cards). Then remove the user's own custom mother_cards
+        // so no private authored situation is left behind.
         await tx.delete(userProfiles).where(eq(userProfiles.userId, userId));
+        await tx.delete(motherCards).where(eq(motherCards.ownerUserId, userId));
         await tx.delete(usageEvents).where(eq(usageEvents.userId, userId));
         await tx.delete(vocalSessions).where(eq(vocalSessions.userId, userId));
         await tx.delete(users).where(eq(users.id, userId));
@@ -1386,13 +1450,125 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
     }
   });
 
+  // --- "Mode personnalisé" (premium-only) -----------------------------------
+
+  // One conversational intake step: returns either the next single question or,
+  // once enough is gathered, a finalized draft. Stateless — the client sends the
+  // running transcript each time.
+  app.post("/api/custom/intake-turn", isAuthenticated, requirePremium, async (req: any, res) => {
+    try {
+      const parsed = intakeTurnBodySchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid request" });
+      const profileId = parsed.data.profileId != null ? parseInt(String(parsed.data.profileId)) : null;
+      const profile = profileId ? await storage.getProfile(profileId) : null;
+      const result = await generateCustomIntakeTurn(parsed.data.transcript, profile);
+      res.json(result);
+    } catch (error) {
+      console.error("Error in custom intake turn:", error);
+      res.status(500).json({ error: "Failed to generate intake turn" });
+    }
+  });
+
+  // Persists a finalized draft as a private custom card and immediately creates
+  // its SRS row for this profile so it shows up in review right away.
+  app.post("/api/custom-cards", isAuthenticated, requirePremium, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub as string;
+      const parsed = saveCustomCardBodySchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid request" });
+
+      const profileId = parseInt(String(parsed.data.profileId));
+      const profile = await storage.getProfile(profileId);
+      if (!profile) return res.status(404).json({ error: "Profile not found" });
+      if (!profile.userId || profile.userId !== userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const d = parsed.data.draft;
+      const insert: InsertMotherCard = {
+        cardId: `custom_${randomUUID()}`,
+        themeId: "custom",
+        packId: "custom",
+        subthemeId: "custom",
+        language: profile.language || "fr",
+        channel: "voice",
+        difficulty: "n2",
+        intent: d.intent,
+        situation: d.situation,
+        speakerRole: d.speakerRole,
+        otherRole: d.otherRole,
+        relationship: d.relationship,
+        stakes: d.stakes,
+        userGoal: d.userGoal,
+        constraints: d.constraints,
+        tags: d.tags,
+        antiPatterns: d.antiPatterns,
+        targetVibe: d.targetVibe,
+        modelAnswerRules: [],
+        variantRulesSafe: [],
+        variantRulesMedium: [],
+        variantRulesBold: [],
+        ownerUserId: userId,
+        customTitle: d.customTitle,
+        openingLine: d.openingLine || null,
+      };
+      const card = await storage.createCustomCard(insert);
+      await storage.getOrCreateSrsState(profileId, card.cardId);
+      res.status(201).json(card);
+    } catch (error) {
+      console.error("Error saving custom card:", error);
+      res.status(500).json({ error: "Failed to save custom card" });
+    }
+  });
+
+  // Lists the caller's own custom cards. Owner-scoped (no premium gate) so a
+  // downgraded user can still view and delete their saved situations.
+  app.get("/api/custom-cards", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub as string;
+      const cards = await storage.getCustomCardsByUser(userId);
+      res.json(cards);
+    } catch (error) {
+      console.error("Error listing custom cards:", error);
+      res.status(500).json({ error: "Failed to list custom cards" });
+    }
+  });
+
+  // Owner-scoped delete (also removes the card's SRS rows). 404 if not owned.
+  app.delete("/api/custom-cards/:cardId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub as string;
+      const ok = await storage.deleteCustomCard(req.params.cardId, userId);
+      if (!ok) return res.status(404).json({ error: "Card not found" });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting custom card:", error);
+      res.status(500).json({ error: "Failed to delete custom card" });
+    }
+  });
+
   app.post("/api/session/opening", isAuthenticated, quotaGuard("vocal_session"), async (req, res) => {
     try {
       const { cardId, profileId } = req.body;
       if (!cardId) return res.status(400).json({ error: "Missing cardId" });
 
-      const card = await storage.getMotherCard(cardId);
+      const userId = (req as any).user.claims.sub as string;
+      // Access control: curated cards are open; a custom card resolves only for
+      // its owner, so a guessed cardId can't be used to practice/probe another
+      // user's private situation.
+      const card = await storage.getAccessibleMotherCard(cardId, userId);
       if (!card) return res.status(404).json({ error: "Card not found" });
+      // Custom situations are a Premium feature; block a downgraded owner.
+      if (card.ownerUserId) {
+        const { unlimited } = await getEffectiveAccess(userId);
+        if (!unlimited) {
+          return res.status(403).json({
+            error: "premium_required",
+            code: "PREMIUM_REQUIRED",
+            message: "Le Mode personnalisé est réservé aux abonnés Premium.",
+          });
+        }
+      }
 
       const profile = profileId ? await storage.getProfile(parseInt(profileId)) : null;
       // Gender drives persona name/pronouns + TTS voice. Prefer the explicit
@@ -1411,7 +1587,7 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
       // Create one metered session row and return a signed token for it. dialogue-turn
       // claims turns against this row and refuses once the conversation is closed, so a
       // free user can't reuse one charged start to run extra conversations.
-      const sessionToken = await startVocalSession((req as any).user.claims.sub, cardId);
+      const sessionToken = await startVocalSession(userId, cardId);
       res.json({ openingLine, sessionToken });
     } catch (error) {
       console.error("Error generating opening line:", error);
@@ -1442,9 +1618,20 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
         return res.status(404).json({ error: "Profile not found" });
       }
 
-      const card = await storage.getMotherCard(cardId);
+      const card = await storage.getAccessibleMotherCard(cardId, userId);
       if (!card) {
         return res.status(404).json({ error: "Card not found" });
+      }
+      // Custom situations are Premium-only; block a downgraded owner mid-flow too.
+      if (card.ownerUserId) {
+        const { unlimited } = await getEffectiveAccess(userId);
+        if (!unlimited) {
+          return res.status(403).json({
+            error: "premium_required",
+            code: "PREMIUM_REQUIRED",
+            message: "Le Mode personnalisé est réservé aux abonnés Premium.",
+          });
+        }
       }
 
       const settings = await storage.getAllAdminSettings();

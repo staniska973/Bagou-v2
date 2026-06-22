@@ -72,8 +72,16 @@ export const motherCards = pgTable("mother_cards", {
   variantRulesSafe: text("variant_rules_safe").array().notNull().default(sql`ARRAY[]::text[]`),
   variantRulesMedium: text("variant_rules_medium").array().notNull().default(sql`ARRAY[]::text[]`),
   variantRulesBold: text("variant_rules_bold").array().notNull().default(sql`ARRAY[]::text[]`),
+  // NULL = curated library card (visible to everyone). Non-null = a private
+  // user-authored "Mode personnalisé" card, only ever surfaced to its owner.
+  ownerUserId: varchar("owner_user_id"),
+  // Optional short label for custom cards (used in the saved-situations list).
+  customTitle: text("custom_title"),
+  // Optional pre-written first interlocutor line. For custom cards we generate
+  // this at save time so the opener doesn't depend on regex-parsing prose.
+  openingLine: text("opening_line"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (table) => [index("IDX_mother_cards_owner").on(table.ownerUserId)]);
 
 export const srsStates = pgTable("srs_states", {
   id: serial("id").primaryKey(),

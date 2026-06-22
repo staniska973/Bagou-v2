@@ -24,6 +24,12 @@ WHERE language='fr' AND card_id NOT IN (<N card_ids to keep new>);
 - Delete account: `button-delete-account` opens AlertDialog `dialog-delete-account`, confirm with `button-confirm-delete`; client then redirects to `/api/logout`. Assert teardown via DB (`user_profiles`/`users` count = 0 for the sub) AND that `GET /api/auth/user` now returns 401 (server destroys the session, not just the client redirect).
 - **Schema-drift gotcha:** login (`/api/login`) crashed with 502 `column "custom_image_url" of relation "users" does not exist` because the dev DB was behind `shared/models/auth.ts`. Fix is `npm run db:push --force` then restart — not a code bug. Run db:push first if auth/upsert 502s in e2e.
 
+## testReplitAuth block is sticky within a session
+`runTest` for these OIDC-gated flows MUST pass `testReplitAuth: true` on the FIRST call. If the first run omits it, the agent hits the real Replit OIDC consent page, records a hard "external OAuth" block, and that block STICKS for the rest of the session — every subsequent `runTest` (even with the flag added) returns the same "Testing was blocked earlier" error. There is no in-session recovery; don't keep retrying. Verify the flag is set before the very first run.
+
+## Premium gating in e2e
+Grant premium to a test user via DB (admin override, no Stripe): `UPDATE users SET subscription_status='active', subscription_expires_at=NULL WHERE id='<sub>';`. Free = default. After granting, do a full page reload so the `/api/subscription/status` query (staleTime 60s) refetches.
+
 ## Gotchas
 - Onboarding sometimes glitches and resets to step 1 after the final click even though `POST /api/profiles` returns 201. Don't treat as failure; the profile exists — navigate to the next page by URL.
 - Reaching the parcours summary without a mic: use the "Sauter l'oral et voir mon débrief" button (`button-parcours-skip-oral`).

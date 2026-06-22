@@ -20,7 +20,7 @@ import {
   type SessionEvent,
   type InsertSessionEvent,
 } from "@shared/schema";
-import { eq, and, lte, sql, desc, asc, gte, or, inArray } from "drizzle-orm";
+import { eq, and, lte, sql, desc, asc, gte, or, inArray, isNull } from "drizzle-orm";
 
 export interface DashboardAggregate {
   today: { cards: number; sessions: number; debriefs: number };
@@ -44,6 +44,11 @@ export interface IStorage {
   getMotherCardsBySubtheme(themeId: string, subthemeId: string, language: string): Promise<MotherCard[]>;
   getAllMotherCards(language: string): Promise<MotherCard[]>;
   getMotherCardCount(): Promise<number>;
+  getCustomCardsByUser(userId: string): Promise<MotherCard[]>;
+  getCustomCardCount(userId: string): Promise<number>;
+  getAccessibleMotherCard(cardId: string, userId: string): Promise<MotherCard | undefined>;
+  createCustomCard(data: InsertMotherCard): Promise<MotherCard>;
+  deleteCustomCard(cardId: string, userId: string): Promise<boolean>;
   createMotherCard(data: InsertMotherCard): Promise<MotherCard>;
   createMotherCards(data: InsertMotherCard[]): Promise<MotherCard[]>;
   updateMotherCard(cardId: string, data: Partial<InsertMotherCard>): Promise<MotherCard | undefined>;
@@ -119,15 +124,26 @@ class DatabaseStorage implements IStorage {
     return card;
   }
 
+  // The getMotherCardsBy* / getAllMotherCards / getMotherCardCount getters power
+  // the CURATED library (browse, due-queue fill, admin, stats). They must never
+  // surface user-authored "Mode personnalisé" cards, so each filters to
+  // ownerUserId IS NULL. Private custom cards are fetched via getCustomCardsByUser.
   async getMotherCardsByPack(packId: string): Promise<MotherCard[]> {
-    return db.select().from(motherCards).where(eq(motherCards.packId, packId));
+    return db
+      .select()
+      .from(motherCards)
+      .where(and(eq(motherCards.packId, packId), isNull(motherCards.ownerUserId)));
   }
 
   async getMotherCardsByTheme(themeId: string, language: string): Promise<MotherCard[]> {
     return db
       .select()
       .from(motherCards)
-      .where(and(eq(motherCards.themeId, themeId), eq(motherCards.language, language)));
+      .where(and(
+        eq(motherCards.themeId, themeId),
+        eq(motherCards.language, language),
+        isNull(motherCards.ownerUserId)
+      ));
   }
 
   async getMotherCardsBySubtheme(themeId: string, subthemeId: string, language: string): Promise<MotherCard[]> {
@@ -137,17 +153,77 @@ class DatabaseStorage implements IStorage {
       .where(and(
         eq(motherCards.themeId, themeId),
         eq(motherCards.subthemeId, subthemeId),
-        eq(motherCards.language, language)
+        eq(motherCards.language, language),
+        isNull(motherCards.ownerUserId)
       ));
   }
 
   async getAllMotherCards(language: string): Promise<MotherCard[]> {
-    return db.select().from(motherCards).where(eq(motherCards.language, language));
+    return db
+      .select()
+      .from(motherCards)
+      .where(and(eq(motherCards.language, language), isNull(motherCards.ownerUserId)));
   }
 
   async getMotherCardCount(): Promise<number> {
-    const result = await db.select({ count: sql<number>`count(*)` }).from(motherCards);
+    const result = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(motherCards)
+      .where(isNull(motherCards.ownerUserId));
     return Number(result[0].count);
+  }
+
+  // --- Custom ("Mode personnalisé") cards -------------------------------------
+
+  async getCustomCardsByUser(userId: string): Promise<MotherCard[]> {
+    return db
+      .select()
+      .from(motherCards)
+      .where(eq(motherCards.ownerUserId, userId))
+      .orderBy(desc(motherCards.createdAt));
+  }
+
+  async getCustomCardCount(userId: string): Promise<number> {
+    const result = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(motherCards)
+      .where(eq(motherCards.ownerUserId, userId));
+    return Number(result[0].count);
+  }
+
+  // Resolves a card only if the caller may use it: curated cards (no owner) are
+  // open to everyone; a custom card is returned only to its owner. Centralizes
+  // access control so session/opening + dialogue-turn can't be used to practice
+  // (or probe) another user's private situation by guessing its cardId.
+  async getAccessibleMotherCard(cardId: string, userId: string): Promise<MotherCard | undefined> {
+    const card = await this.getMotherCard(cardId);
+    if (!card) return undefined;
+    if (card.ownerUserId && card.ownerUserId !== userId) return undefined;
+    return card;
+  }
+
+  async createCustomCard(data: InsertMotherCard): Promise<MotherCard> {
+    if (!data.ownerUserId) {
+      throw new Error("createCustomCard requires ownerUserId");
+    }
+    const [card] = await db.insert(motherCards).values(data).returning();
+    return card;
+  }
+
+  // Owner-scoped delete: removes the card only if it belongs to userId, and
+  // cleans up its SRS rows so no orphan review state is left behind. Returns
+  // false if the card doesn't exist or isn't owned by the caller.
+  async deleteCustomCard(cardId: string, userId: string): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      const [card] = await tx
+        .select()
+        .from(motherCards)
+        .where(and(eq(motherCards.cardId, cardId), eq(motherCards.ownerUserId, userId)));
+      if (!card) return false;
+      await tx.delete(srsStates).where(eq(srsStates.cardId, cardId));
+      await tx.delete(motherCards).where(eq(motherCards.id, card.id));
+      return true;
+    });
   }
 
   async createMotherCard(data: InsertMotherCard): Promise<MotherCard> {
@@ -174,8 +250,13 @@ class DatabaseStorage implements IStorage {
   }
 
   async deleteMotherCardsBySubtheme(themeId: string, subthemeId: string): Promise<void> {
+    // Curated-only: never let an admin subtheme purge wipe users' private custom cards.
     await db.delete(motherCards).where(
-      and(eq(motherCards.themeId, themeId), eq(motherCards.subthemeId, subthemeId))
+      and(
+        eq(motherCards.themeId, themeId),
+        eq(motherCards.subthemeId, subthemeId),
+        isNull(motherCards.ownerUserId)
+      )
     );
   }
 
@@ -385,7 +466,12 @@ class DatabaseStorage implements IStorage {
       }
     }
 
-    const totalCards = await this.getMotherCardCount();
+    // Total reviewable cards = curated library + this user's own custom cards,
+    // so progress stays consistent with due/mastered (which include custom cards).
+    const profile = await this.getProfile(profileId);
+    const curatedCount = await this.getMotherCardCount();
+    const customCount = profile?.userId ? await this.getCustomCardCount(profile.userId) : 0;
+    const totalCards = curatedCount + customCount;
 
     const weakCardCount = allStates.filter(s => s.isPriority || s.lapses >= 2).length;
 

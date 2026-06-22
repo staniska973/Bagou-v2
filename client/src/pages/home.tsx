@@ -12,6 +12,7 @@ import {
   Sparkles,
   Route as RouteIcon,
   Settings,
+  Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -248,6 +249,26 @@ export default function Home() {
               subtitle="Oral seul"
             />
           </div>
+        </motion.div>
+
+        {/* Mode personnalisé */}
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.19 }} className="mt-2">
+          <Card
+            className="cursor-pointer hover-elevate active-elevate-2 overflow-hidden border-2 border-primary/25 bg-gradient-to-br from-primary/10 via-card to-accent/5"
+            onClick={() => navigate("/personnalise")}
+            data-testid="card-mode-custom"
+          >
+            <CardContent className="p-3.5 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                <Wand2 className="w-4 h-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold leading-none">Mode personnalisé</p>
+                <p className="text-[11px] text-muted-foreground mt-1">Invente ta propre situation</p>
+              </div>
+              <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+            </CardContent>
+          </Card>
         </motion.div>
 
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.22 }} className="mt-6">

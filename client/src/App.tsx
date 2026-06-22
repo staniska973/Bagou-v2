@@ -18,6 +18,7 @@ import Home from "@/pages/home";
 import Parcours from "@/pages/parcours";
 import Cards from "@/pages/cards";
 import Vocal from "@/pages/vocal";
+import Custom from "@/pages/custom";
 import Stats from "@/pages/stats";
 import Admin from "@/pages/admin";
 import Pricing from "@/pages/pricing";
@@ -30,6 +31,7 @@ function AuthenticatedRouter() {
       <Route path="/parcours" component={Parcours} />
       <Route path="/cards" component={Cards} />
       <Route path="/vocal" component={Vocal} />
+      <Route path="/personnalise" component={Custom} />
       <Route path="/stats" component={Stats} />
       <Route path="/abonnement" component={Pricing} />
       <Route path="/parametres" component={SettingsPage} />
