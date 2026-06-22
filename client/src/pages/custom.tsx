@@ -1,11 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   ArrowLeft,
   Sparkles,
   Plus,
-  Send,
   Loader2,
   Mic,
   PenLine,
@@ -19,10 +18,12 @@ import {
   Quote,
   Target,
   Wand2,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -64,13 +65,37 @@ interface CustomCardDraft {
   openingLine: string;
 }
 
-type IntakeMsg = { role: "bagou" | "user"; content: string };
-type IntakeResult =
-  | { status: "question"; question: string; missingSlots: string[] }
-  | { status: "ready"; draft: CustomCardDraft };
-
-type View = "list" | "intake" | "practice";
+type View = "list" | "compose" | "practice";
 type PracticeMode = "choose" | "vocal" | "text" | "rate";
+
+const OTHER_ROLE_CHIPS = [
+  "Mon père",
+  "Ma mère",
+  "Mon/ma partenaire",
+  "Mon patron",
+  "Un·e collègue",
+  "Un·e ami·e",
+  "Un client",
+  "Un proche",
+];
+const MOOD_CHIPS = [
+  "Calme",
+  "À cran",
+  "Colérique",
+  "Fermé·e",
+  "Sur la défensive",
+  "Condescendant·e",
+  "Anxieux·se",
+  "Distant·e",
+];
+const GOAL_CHIPS = [
+  "Poser une limite",
+  "Dire non",
+  "Me faire respecter",
+  "Exprimer un besoin",
+  "Demander un changement",
+  "Faire passer mon message",
+];
 
 const RATINGS = [
   { key: "hard" as const, label: "Difficile", Icon: ThumbsDown, base: "border-destructive/40 text-destructive", fill: "bg-destructive text-white border-destructive" },
@@ -161,7 +186,7 @@ function PremiumGate({ onBack, onUpgrade }: { onBack: () => void; onUpgrade: () 
         <Card className="border-primary/20 bg-card/80 mb-5">
           <CardContent className="p-5 space-y-3">
             {[
-              "Décris ta scène : Bagou te pose les bonnes questions, une par une.",
+              "Remplis un mini-formulaire : Bagou transforme ta scène en exercice sur mesure.",
               "Ta situation est enregistrée et entre dans tes révisions.",
               "Entraîne-toi dessus à l'oral ou à l'écrit, autant de fois que tu veux.",
             ].map((t, i) => (
@@ -207,8 +232,8 @@ function CustomInner({ profileId, interlocutorGender }: { profileId: number; int
     setView("list");
   };
 
-  if (view === "intake") {
-    return <IntakePanel profileId={profileId} onCancel={() => setView("list")} onSaved={() => setView("list")} />;
+  if (view === "compose") {
+    return <ComposerPanel profileId={profileId} onCancel={() => setView("list")} onSaved={() => setView("list")} />;
   }
 
   if (view === "practice" && practiceCard) {
@@ -248,7 +273,7 @@ function CustomInner({ profileId, interlocutorGender }: { profileId: number; int
         </motion.div>
 
         <Button
-          onClick={() => setView("intake")}
+          onClick={() => setView("compose")}
           className="w-full h-14 rounded-2xl text-base gap-2 mt-5"
           data-testid="button-custom-create"
         >
@@ -360,7 +385,62 @@ function CustomCardRow({ card, onPractice }: { card: CustomCard; onPractice: () 
   );
 }
 
-function IntakePanel({
+function ChipRow({
+  prefix,
+  options,
+  value,
+  onSelect,
+}: {
+  prefix: string;
+  options: string[];
+  value: string;
+  onSelect: (v: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((opt, i) => {
+        const active = value.trim().toLowerCase() === opt.toLowerCase();
+        return (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onSelect(active ? "" : opt)}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+              active
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-card text-foreground/80 border-border hover-elevate active-elevate-2"
+            }`}
+            data-testid={`chip-${prefix}-${i}`}
+          >
+            {opt}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-2">
+      <div>
+        <label className="text-sm font-semibold text-foreground">{label}</label>
+        {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ComposerPanel({
   profileId,
   onCancel,
   onSaved,
@@ -369,72 +449,62 @@ function IntakePanel({
   onCancel: () => void;
   onSaved: () => void;
 }) {
-  const [messages, setMessages] = useState<IntakeMsg[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [description, setDescription] = useState("");
+  const [otherRole, setOtherRole] = useState("");
+  const [mood, setMood] = useState("");
+  const [userGoal, setUserGoal] = useState("");
+  const [relationship, setRelationship] = useState("");
+  const [stakes, setStakes] = useState("");
+  const [showDetails, setShowDetails] = useState(false);
+
+  const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState<CustomCardDraft | null>(null);
   const [title, setTitle] = useState("");
+  const [scene, setScene] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const transcriptRef = useRef<IntakeMsg[]>([]);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const startedRef = useRef(false);
 
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [messages, loading, draft]);
+  const canCompose =
+    description.trim().length > 0 && otherRole.trim().length > 0 && userGoal.trim().length > 0;
 
-  const applyResult = useCallback((result: IntakeResult) => {
-    if (result.status === "ready") {
-      setDraft(result.draft);
-      setTitle(result.draft.customTitle);
-    } else {
-      transcriptRef.current = [...transcriptRef.current, { role: "bagou", content: result.question }];
-      setMessages((prev) => [...prev, { role: "bagou", content: result.question }]);
-    }
-  }, []);
-
-  const callIntake = useCallback(async () => {
-    setLoading(true);
+  const compose = async () => {
+    if (!canCompose || composing) return;
+    setComposing(true);
     setError(null);
     try {
-      const res = await apiRequest("POST", "/api/custom/intake-turn", {
-        transcript: transcriptRef.current,
+      const res = await apiRequest("POST", "/api/custom/compose", {
         profileId,
+        description: description.trim(),
+        otherRole: otherRole.trim(),
+        relationship: relationship.trim() || undefined,
+        mood: mood.trim() || undefined,
+        stakes: stakes.trim() || undefined,
+        userGoal: userGoal.trim(),
       });
-      const result: IntakeResult = await res.json();
-      applyResult(result);
+      const data = await res.json();
+      const d: CustomCardDraft = data.draft;
+      setDraft(d);
+      setTitle(d.customTitle);
+      setScene(d.situation);
     } catch {
-      setError("Bagou n'a pas pu répondre. Réessaie dans un instant.");
+      setError("Bagou n'a pas pu créer la situation. Réessaie dans un instant.");
     } finally {
-      setLoading(false);
+      setComposing(false);
     }
-  }, [profileId, applyResult]);
-
-  useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    void callIntake();
-  }, [callIntake]);
-
-  const send = async () => {
-    const text = input.trim();
-    if (!text || loading) return;
-    setInput("");
-    transcriptRef.current = [...transcriptRef.current, { role: "user", content: text }];
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
-    await callIntake();
   };
 
   const save = async () => {
     if (!draft || saving) return;
+    if (!title.trim() || !scene.trim()) {
+      setError("Donne un titre et une description à ta situation.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       await apiRequest("POST", "/api/custom-cards", {
         profileId,
-        draft: { ...draft, customTitle: title.trim() || draft.customTitle },
+        draft: { ...draft, customTitle: title.trim(), situation: scene.trim() },
       });
       queryClient.invalidateQueries({ queryKey: ["/api/custom-cards"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
@@ -449,95 +519,169 @@ function IntakePanel({
     <div className="h-dvh flex flex-col bg-gradient-to-br from-background via-background to-primary/5">
       <div className="flex-shrink-0 px-4 pt-4 pb-2">
         <div className="max-w-lg mx-auto flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="-ml-2" onClick={onCancel} data-testid="button-intake-back">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="-ml-2"
+            onClick={draft ? () => setDraft(null) : onCancel}
+            data-testid="button-composer-back"
+          >
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div className="flex items-center gap-1.5">
             <Wand2 className="w-4 h-4 text-primary" />
-            <span className="text-sm font-bold">Crée ta situation</span>
+            <span className="text-sm font-bold">{draft ? "Valide ta situation" : "Crée ta situation"}</span>
           </div>
         </div>
       </div>
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4">
-        <div className="max-w-lg mx-auto py-3 space-y-3">
-          <AnimatePresence initial={false}>
-            {messages.map((m, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
-                    m.role === "user"
-                      ? "bg-primary text-primary-foreground rounded-br-md"
-                      : "bg-card border border-border rounded-bl-md"
-                  }`}
-                  data-testid={`bubble-intake-${m.role}-${i}`}
-                >
-                  {m.content}
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-
-          {loading && (
-            <div className="flex justify-start" data-testid="status-intake-loading">
-              <div className="bg-card border border-border rounded-2xl rounded-bl-md px-3.5 py-2.5">
-                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+      <div className="flex-1 min-h-0 overflow-y-auto px-4">
+        <div className="max-w-lg mx-auto py-4">
+          {draft ? (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+              <div className="flex items-center gap-1.5 text-accent">
+                <CheckCircle2 className="w-4 h-4" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Ta situation est prête</span>
               </div>
-            </div>
-          )}
+              <p className="text-sm text-muted-foreground -mt-1">
+                Relis, ajuste si besoin, puis enregistre. Tu pourras t'entraîner dessus tout de suite.
+              </p>
 
-          {draft && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-              <Card className="border-accent/30 bg-accent/5" data-testid="card-intake-draft">
-                <CardContent className="p-4 space-y-3">
-                  <p className="text-[10px] font-semibold text-accent uppercase tracking-wide flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Ta situation est prête
-                  </p>
-                  <div>
-                    <label className="text-xs font-semibold text-foreground/70">Titre</label>
-                    <Textarea
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
-                      rows={1}
-                      className="mt-1 resize-none text-sm rounded-xl min-h-[40px] bg-card"
-                      data-testid="input-intake-title"
-                    />
-                  </div>
-                  <div className="text-sm leading-relaxed">
-                    <p className="font-medium" data-testid="text-intake-draft-situation">
-                      {draft.situation}
-                    </p>
-                  </div>
-                  <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
+              <Field label="Titre">
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="rounded-xl bg-card"
+                  data-testid="input-composer-title"
+                />
+              </Field>
+
+              <Field label="La scène">
+                <Textarea
+                  value={scene}
+                  onChange={(e) => setScene(e.target.value)}
+                  rows={4}
+                  className="resize-none text-sm rounded-xl bg-card"
+                  data-testid="textarea-composer-scene-edit"
+                />
+              </Field>
+
+              <Card className="border-border/60 bg-card/60">
+                <CardContent className="p-4 space-y-2 text-xs text-muted-foreground">
+                  <div className="flex items-start gap-1.5">
                     <Target className="w-3.5 h-3.5 text-accent shrink-0 mt-0.5" />
-                    <span data-testid="text-intake-draft-goal">
+                    <span data-testid="text-composer-goal">
                       <span className="font-semibold text-foreground/70">Objectif&nbsp;:</span> {draft.userGoal}
                     </span>
                   </div>
-                  <div className="text-xs text-muted-foreground space-y-0.5 border-t border-border/50 pt-2">
+                  <p>
+                    <span className="font-semibold text-foreground/70">Face à toi&nbsp;:</span> {draft.otherRole}
+                  </p>
+                  {draft.relationship && (
                     <p>
-                      <span className="font-semibold text-foreground/70">Face à toi&nbsp;:</span> {draft.otherRole}
+                      <span className="font-semibold text-foreground/70">Relation&nbsp;:</span> {draft.relationship}
                     </p>
-                    {draft.relationship && (
-                      <p>
-                        <span className="font-semibold text-foreground/70">Relation&nbsp;:</span> {draft.relationship}
-                      </p>
-                    )}
-                  </div>
+                  )}
+                  {draft.stakes && (
+                    <p>
+                      <span className="font-semibold text-foreground/70">En jeu&nbsp;:</span> {draft.stakes}
+                    </p>
+                  )}
                 </CardContent>
               </Card>
-            </motion.div>
-          )}
 
-          {error && (
-            <p className="text-xs text-destructive text-center" data-testid="text-intake-error">
-              {error}
-            </p>
+              {error && (
+                <p className="text-xs text-destructive text-center" data-testid="text-composer-error">
+                  {error}
+                </p>
+              )}
+            </motion.div>
+          ) : (
+            <div className="space-y-5">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Crée ta situation</h1>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Décris ta scène comme tu la vis. Bagou la transforme en exercice sur mesure.
+                </p>
+              </div>
+
+              <Field label="La scène" hint="Qu'est-ce qui se passe, et où ?">
+                <Textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={4}
+                  placeholder="Ex : Mon père gère mal le TDAH de mon frère. Je veux lui en parler ce week-end sans que ça finisse en dispute."
+                  className="resize-none text-base rounded-xl bg-card/60"
+                  data-testid="textarea-composer-scene"
+                />
+              </Field>
+
+              <Field label="En face de toi" hint="Tu parles à qui ?">
+                <Input
+                  value={otherRole}
+                  onChange={(e) => setOtherRole(e.target.value)}
+                  placeholder="Ex : mon père"
+                  className="rounded-xl bg-card/60"
+                  data-testid="input-composer-other"
+                />
+                <ChipRow prefix="other" options={OTHER_ROLE_CHIPS} value={otherRole} onSelect={setOtherRole} />
+              </Field>
+
+              <Field label="Son état d'esprit" hint="Comment elle arrive dans la scène (facultatif)">
+                <ChipRow prefix="mood" options={MOOD_CHIPS} value={mood} onSelect={setMood} />
+              </Field>
+
+              <Field label="Ton objectif" hint="Qu'est-ce que tu veux obtenir ?">
+                <Input
+                  value={userGoal}
+                  onChange={(e) => setUserGoal(e.target.value)}
+                  placeholder="Ex : qu'il comprenne mon point de vue"
+                  className="rounded-xl bg-card/60"
+                  data-testid="input-composer-goal"
+                />
+                <ChipRow prefix="goal" options={GOAL_CHIPS} value={userGoal} onSelect={setUserGoal} />
+              </Field>
+
+              <div className="border-t border-border/50 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowDetails((v) => !v)}
+                  className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground"
+                  data-testid="button-composer-details"
+                >
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showDetails ? "rotate-180" : ""}`} />
+                  Ajouter des détails (facultatif)
+                </button>
+                {showDetails && (
+                  <div className="space-y-5 mt-4">
+                    <Field label="Votre relation" hint="Quel lien, depuis quand">
+                      <Input
+                        value={relationship}
+                        onChange={(e) => setRelationship(e.target.value)}
+                        placeholder="Ex : mon père, depuis toujours"
+                        className="rounded-xl bg-card/60"
+                        data-testid="input-composer-relationship"
+                      />
+                    </Field>
+                    <Field label="Ce qui est en jeu" hint="Ce que tu risques si ça tourne mal">
+                      <Input
+                        value={stakes}
+                        onChange={(e) => setStakes(e.target.value)}
+                        placeholder="Ex : abîmer la relation"
+                        className="rounded-xl bg-card/60"
+                        data-testid="input-composer-stakes"
+                      />
+                    </Field>
+                  </div>
+                )}
+              </div>
+
+              {error && (
+                <p className="text-xs text-destructive text-center" data-testid="text-composer-error">
+                  {error}
+                </p>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -549,48 +693,39 @@ function IntakePanel({
               <Button
                 variant="outline"
                 className="h-12 rounded-xl px-4"
-                onClick={onCancel}
+                onClick={() => setDraft(null)}
                 disabled={saving}
-                data-testid="button-intake-discard"
+                data-testid="button-composer-edit"
               >
-                Abandonner
+                Modifier
               </Button>
               <Button
                 className="flex-1 h-12 rounded-xl gap-2"
                 onClick={save}
                 disabled={saving}
-                data-testid="button-intake-save"
+                data-testid="button-composer-save"
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                 Enregistrer la situation
               </Button>
             </div>
           ) : (
-            <div className="flex items-end gap-2">
-              <Textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                placeholder="Ta réponse…"
-                className="resize-none text-base min-h-[52px] max-h-[120px] rounded-xl bg-card/60"
-                disabled={loading}
-                data-testid="textarea-intake-input"
-              />
-              <Button
-                onClick={send}
-                disabled={loading || !input.trim()}
-                className="h-[52px] w-[52px] rounded-xl shrink-0"
-                size="icon"
-                data-testid="button-intake-send"
-              >
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-              </Button>
-            </div>
+            <Button
+              className="w-full h-14 rounded-2xl text-base gap-2"
+              onClick={compose}
+              disabled={!canCompose || composing}
+              data-testid="button-composer-create"
+            >
+              {composing ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" /> Bagou prépare ta scène…
+                </>
+              ) : (
+                <>
+                  <Wand2 className="w-5 h-5" /> Créer ma situation
+                </>
+              )}
+            </Button>
           )}
         </div>
       </div>

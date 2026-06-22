@@ -3,7 +3,7 @@ import type { Server } from "http";
 import { randomUUID } from "crypto";
 import multer from "multer";
 import { storage } from "./storage";
-import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, generateScenePersona, generateDashboardAnalysis, generateCustomIntakeTurn, updateAIRuntimeConfig, getAIRuntimeConfig, type DashboardAnalysis, type ScenePersona } from "./ai";
+import { generateModelAnswer, scoreUserAnswer, generateRoleplayTurn, generateDebrief, generateDialogueTurnWithEval, generateScenePersona, generateDashboardAnalysis, composeCustomCardDraft, updateAIRuntimeConfig, getAIRuntimeConfig, type DashboardAnalysis, type ScenePersona } from "./ai";
 import { speechToText, ensureCompatibleFormat, textToSpeech } from "./replit_integrations/audio/client";
 import { insertUserProfileSchema, insertSessionEventSchema, interlocutorGenderEnum, type InsertMotherCard } from "@shared/schema";
 import { z } from "zod";
@@ -53,14 +53,14 @@ const genderSchema = z.enum(interlocutorGenderEnum);
 // --- "Mode personnalisé" request validation ---------------------------------
 // User-typed intake content is DATA, never instructions (the AI layer is also
 // hardened); we still clamp sizes here as the first line of defense.
-const intakeMessageSchema = z.object({
-  role: z.enum(["bagou", "user"]),
-  content: z.string().min(1).max(2000),
-});
-
-const intakeTurnBodySchema = z.object({
-  transcript: z.array(intakeMessageSchema).max(40),
+const composeFormSchema = z.object({
   profileId: z.union([z.number(), z.string()]).optional(),
+  description: z.string().trim().min(1).max(2000),
+  otherRole: z.string().trim().max(200).optional(),
+  relationship: z.string().trim().max(300).optional(),
+  mood: z.string().trim().max(200).optional(),
+  stakes: z.string().trim().max(400).optional(),
+  userGoal: z.string().trim().min(1).max(400),
 });
 
 // The narrative draft Bagou produces; the server adds theme/pack/language and
@@ -1452,20 +1452,29 @@ export async function registerRoutes(server: Server, app: Express): Promise<void
 
   // --- "Mode personnalisé" (premium-only) -----------------------------------
 
-  // One conversational intake step: returns either the next single question or,
-  // once enough is gathered, a finalized draft. Stateless — the client sends the
-  // running transcript each time.
-  app.post("/api/custom/intake-turn", isAuthenticated, requirePremium, async (req: any, res) => {
+  // Turns the composer form into a finalized, realistic draft (AI-enriched, with
+  // a deterministic fallback). Stateless — the client posts all fields at once.
+  app.post("/api/custom/compose", isAuthenticated, requirePremium, async (req: any, res) => {
     try {
-      const parsed = intakeTurnBodySchema.safeParse(req.body);
+      const parsed = composeFormSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "Invalid request" });
       const profileId = parsed.data.profileId != null ? parseInt(String(parsed.data.profileId)) : null;
       const profile = profileId ? await storage.getProfile(profileId) : null;
-      const result = await generateCustomIntakeTurn(parsed.data.transcript, profile);
-      res.json(result);
+      const draft = await composeCustomCardDraft(
+        {
+          description: parsed.data.description,
+          otherRole: parsed.data.otherRole,
+          relationship: parsed.data.relationship,
+          mood: parsed.data.mood,
+          stakes: parsed.data.stakes,
+          userGoal: parsed.data.userGoal,
+        },
+        profile,
+      );
+      res.json({ draft });
     } catch (error) {
-      console.error("Error in custom intake turn:", error);
-      res.status(500).json({ error: "Failed to generate intake turn" });
+      console.error("Error composing custom card:", error);
+      res.status(500).json({ error: "Failed to compose custom card" });
     }
   });
 
