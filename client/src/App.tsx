@@ -35,7 +35,6 @@ function AuthenticatedRouter() {
       <Route path="/stats" component={Stats} />
       <Route path="/abonnement" component={Pricing} />
       <Route path="/parametres" component={SettingsPage} />
-      <Route path="/admin" component={Admin} />
       <Route path="/" component={Home} />
       <Route component={NotFound} />
     </Switch>
@@ -59,26 +58,30 @@ function AppHeader() {
 function AppContent() {
   const { user, isLoading } = useAuth();
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="space-y-4 text-center">
-          <Skeleton className="w-16 h-16 rounded-full mx-auto" />
-          <Skeleton className="w-32 h-4 mx-auto" />
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Landing />;
-  }
-
   return (
-    <PaywallProvider>
-      <AppHeader />
-      <AuthenticatedRouter />
-    </PaywallProvider>
+    <Switch>
+      {/* The admin dashboard has its own independent login (a separate admin
+          session, not the Replit account login), so it must be reachable
+          directly at /admin without going through the account gate below. */}
+      <Route path="/admin" component={Admin} />
+      <Route>
+        {isLoading ? (
+          <div className="min-h-screen flex items-center justify-center bg-background">
+            <div className="space-y-4 text-center">
+              <Skeleton className="w-16 h-16 rounded-full mx-auto" />
+              <Skeleton className="w-32 h-4 mx-auto" />
+            </div>
+          </div>
+        ) : !user ? (
+          <Landing />
+        ) : (
+          <PaywallProvider>
+            <AppHeader />
+            <AuthenticatedRouter />
+          </PaywallProvider>
+        )}
+      </Route>
+    </Switch>
   );
 }
 
