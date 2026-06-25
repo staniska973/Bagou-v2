@@ -184,6 +184,15 @@ export default function Pricing() {
           7 jours d'essai gratuit, puis facturation automatique. Annule quand tu veux depuis la
           gestion de l'abonnement.
         </p>
+        <nav className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+          <a href="/cgv" className="hover:text-foreground" data-testid="link-pricing-cgv">
+            Conditions générales de vente
+          </a>
+          <span>·</span>
+          <a href="/mentions-legales" className="hover:text-foreground" data-testid="link-pricing-mentions">
+            Mentions légales
+          </a>
+        </nav>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
+  ChevronRight,
   Crown,
   Loader2,
   LogOut,
@@ -658,6 +659,32 @@ export default function Settings() {
                   })}
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </section>
+
+        {/* ── Section: Légal ── */}
+        <section>
+          <SectionTitle>Légal</SectionTitle>
+
+          <Card>
+            <CardContent className="flex flex-col divide-y p-0">
+              <a
+                href="/cgv"
+                className="flex items-center justify-between px-4 py-3.5 text-sm font-medium hover-elevate active-elevate-2"
+                data-testid="link-settings-cgv"
+              >
+                Conditions générales de vente et d'utilisation
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </a>
+              <a
+                href="/mentions-legales"
+                className="flex items-center justify-between px-4 py-3.5 text-sm font-medium hover-elevate active-elevate-2"
+                data-testid="link-settings-mentions"
+              >
+                Mentions légales
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </a>
             </CardContent>
           </Card>
         </section>

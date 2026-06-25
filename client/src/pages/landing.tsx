@@ -155,11 +155,19 @@ export default function Landing() {
       </section>
 
       <footer className="py-6 sm:py-8 px-4 sm:px-6 border-t">
-        <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-4 text-sm text-muted-foreground">
+        <div className="max-w-5xl mx-auto flex flex-col items-center gap-4 text-sm text-muted-foreground sm:flex-row sm:justify-between">
           <div className="flex items-center gap-2">
             <img src={bagouIcon} alt="Bagou" className="w-5 h-5 object-contain" />
             <span>Bagou</span>
           </div>
+          <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+            <a href="/cgv" className="hover:text-foreground" data-testid="link-footer-cgv">
+              Conditions générales
+            </a>
+            <a href="/mentions-legales" className="hover:text-foreground" data-testid="link-footer-mentions">
+              Mentions légales
+            </a>
+          </nav>
           <p>2026 Bagou. Tous droits réservés.</p>
         </div>
       </footer>

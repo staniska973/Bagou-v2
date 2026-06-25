@@ -23,6 +23,7 @@ import Stats from "@/pages/stats";
 import Admin from "@/pages/admin";
 import Pricing from "@/pages/pricing";
 import SettingsPage from "@/pages/settings";
+import { LegalTerms, LegalNotice } from "@/pages/legal";
 
 function AuthenticatedRouter() {
   return (
@@ -64,6 +65,8 @@ function AppContent() {
           session, not the Replit account login), so it must be reachable
           directly at /admin without going through the account gate below. */}
       <Route path="/admin" component={Admin} />
+      <Route path="/cgv" component={LegalTerms} />
+      <Route path="/mentions-legales" component={LegalNotice} />
       <Route>
         {isLoading ? (
           <div className="min-h-screen flex items-center justify-center bg-background">
