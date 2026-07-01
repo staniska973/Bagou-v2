@@ -18,7 +18,9 @@ async function fetchUser(): Promise<User | null> {
 }
 
 async function logout(): Promise<void> {
-  window.location.href = "/api/logout";
+  // Break out of the Replit preview iframe: the Replit auth/end-session page
+  // refuses to be embedded, so navigate the top-level window instead.
+  (window.top ?? window).location.href = "/api/logout";
 }
 
 export function useAuth() {

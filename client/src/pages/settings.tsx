@@ -170,7 +170,7 @@ export default function Settings() {
       await apiRequest("DELETE", "/api/account");
     },
     onSuccess: () => {
-      window.location.href = "/api/logout";
+      (window.top ?? window).location.href = "/api/logout";
     },
     onError: () =>
       toast({

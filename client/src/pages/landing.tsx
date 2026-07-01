@@ -15,7 +15,7 @@ export default function Landing() {
             <span className="font-bold text-lg">Bagou</span>
           </div>
           <Button asChild data-testid="button-login-nav">
-            <a href="/api/login">Se connecter</a>
+            <a href="/api/login" target="_top">Se connecter</a>
           </Button>
         </div>
       </nav>
@@ -36,7 +36,7 @@ export default function Landing() {
             </p>
             <div className="flex flex-wrap items-center gap-3 mb-6">
               <Button size="lg" asChild data-testid="button-get-started">
-                <a href="/api/login">
+                <a href="/api/login" target="_top">
                   Commencer gratuitement
                   <ChevronRight className="w-5 h-5 ml-1" />
                 </a>
@@ -145,7 +145,7 @@ export default function Landing() {
               Rejoignez Bagou et commencez votre entraînement quotidien en communication.
             </p>
             <Button size="lg" asChild data-testid="button-cta-bottom">
-              <a href="/api/login">
+              <a href="/api/login" target="_top">
                 Commencer maintenant
                 <ChevronRight className="w-5 h-5 ml-1" />
               </a>

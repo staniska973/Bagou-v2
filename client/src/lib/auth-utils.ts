@@ -12,6 +12,8 @@ export function redirectToLogin(toast?: (options: { title: string; description: 
     });
   }
   setTimeout(() => {
-    window.location.href = "/api/login";
+    // Break out of the Replit preview iframe: the Replit login page refuses to
+    // be embedded, so navigate the top-level window instead.
+    (window.top ?? window).location.href = "/api/login";
   }, 500);
 }
