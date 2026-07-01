@@ -8,6 +8,7 @@ export interface SubscriptionStatus {
   source: AccessSource;
   isPremium: boolean;
   trialEndsAt: string | null;
+  renewsAt: string | null;
   usage: {
     cards: { used: number; limit: number | null };
     vocal: { used: number; limit: number | null };

@@ -14,6 +14,8 @@ export interface EffectiveAccess {
   tier: AccessTier;
   source: AccessSource;
   trialEndsAt: Date | null;
+  // Next billing/renewal date for paying (Stripe) premium users; null otherwise.
+  renewsAt: Date | null;
   // true for trial and premium — i.e. no quotas apply.
   unlimited: boolean;
 }
@@ -58,7 +60,7 @@ async function getActiveStripeSubscription(
 export async function getEffectiveAccess(userId: string): Promise<EffectiveAccess> {
   const [user] = await db.select().from(users).where(eq(users.id, userId));
   if (!user) {
-    return { tier: "free", source: "none", trialEndsAt: null, unlimited: false };
+    return { tier: "free", source: "none", trialEndsAt: null, renewsAt: null, unlimited: false };
   }
 
   // Manual admin override, independent of Stripe.
@@ -66,13 +68,14 @@ export async function getEffectiveAccess(userId: string): Promise<EffectiveAcces
     !user.subscriptionExpiresAt || user.subscriptionExpiresAt.getTime() > Date.now();
   if (overrideActive) {
     if (user.subscriptionStatus === "active") {
-      return { tier: "premium", source: "admin", trialEndsAt: null, unlimited: true };
+      return { tier: "premium", source: "admin", trialEndsAt: null, renewsAt: null, unlimited: true };
     }
     if (user.subscriptionStatus === "trial") {
       return {
         tier: "trial",
         source: "admin",
         trialEndsAt: user.subscriptionExpiresAt ?? null,
+        renewsAt: null,
         unlimited: true,
       };
     }
@@ -82,7 +85,13 @@ export async function getEffectiveAccess(userId: string): Promise<EffectiveAcces
   if (user.stripeCustomerId) {
     const sub = await getActiveStripeSubscription(user.stripeCustomerId);
     if (sub?.status === "active") {
-      return { tier: "premium", source: "stripe", trialEndsAt: null, unlimited: true };
+      return {
+        tier: "premium",
+        source: "stripe",
+        trialEndsAt: null,
+        renewsAt: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd * 1000) : null,
+        unlimited: true,
+      };
     }
     if (sub?.status === "trialing") {
       // Prefer the explicit trial_end; fall back to current_period_end (which
@@ -92,12 +101,13 @@ export async function getEffectiveAccess(userId: string): Promise<EffectiveAcces
         tier: "trial",
         source: "stripe",
         trialEndsAt: endTs ? new Date(endTs * 1000) : null,
+        renewsAt: null,
         unlimited: true,
       };
     }
   }
 
-  return { tier: "free", source: "none", trialEndsAt: null, unlimited: false };
+  return { tier: "free", source: "none", trialEndsAt: null, renewsAt: null, unlimited: false };
 }
 
 function startOfToday(): Date {
@@ -136,6 +146,7 @@ export interface SubscriptionStatus {
   source: AccessSource;
   isPremium: boolean;
   trialEndsAt: string | null;
+  renewsAt: string | null;
   usage: {
     cards: { used: number; limit: number | null };
     vocal: { used: number; limit: number | null };
@@ -154,6 +165,7 @@ export async function getSubscriptionStatus(userId: string): Promise<Subscriptio
     source: access.source,
     isPremium: access.unlimited,
     trialEndsAt: access.trialEndsAt ? access.trialEndsAt.toISOString() : null,
+    renewsAt: access.renewsAt ? access.renewsAt.toISOString() : null,
     usage: {
       cards: { used: cardsUsed, limit: access.unlimited ? null : FREE_DAILY_CARDS },
       vocal: { used: vocalUsed, limit: access.unlimited ? null : FREE_WEEKLY_VOCAL },

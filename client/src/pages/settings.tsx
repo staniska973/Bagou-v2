@@ -567,7 +567,10 @@ export default function Settings() {
                   {tier === "trial" && <p className="font-semibold">Essai gratuit en cours</p>}
                   {tier === "free" && <p className="font-semibold">Offre gratuite</p>}
                   <p className="text-sm text-muted-foreground">
-                    {tier === "premium" && "Accès illimité à tout l'entraînement."}
+                    {tier === "premium" &&
+                      (status?.renewsAt
+                        ? `Accès illimité. Renouvellement le ${new Date(status.renewsAt).toLocaleDateString("fr-FR")}.`
+                        : "Accès illimité à tout l'entraînement.")}
                     {tier === "trial" &&
                       (status?.trialEndsAt
                         ? `Jusqu'au ${new Date(status.trialEndsAt).toLocaleDateString("fr-FR")}.`
