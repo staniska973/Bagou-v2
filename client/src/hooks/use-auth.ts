@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { User } from "@shared/models/auth";
+import { goToAuth } from "@/lib/auth-utils";
 
 async function fetchUser(): Promise<User | null> {
   const response = await fetch("/api/auth/user", {
@@ -18,9 +19,7 @@ async function fetchUser(): Promise<User | null> {
 }
 
 async function logout(): Promise<void> {
-  // Break out of the Replit preview iframe: the Replit auth/end-session page
-  // refuses to be embedded, so navigate the top-level window instead.
-  (window.top ?? window).location.href = "/api/logout";
+  goToAuth("/api/logout");
 }
 
 export function useAuth() {

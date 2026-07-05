@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { MessageSquare, Brain, TrendingUp, Zap, ChevronRight, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { goToAuth } from "@/lib/auth-utils";
 import bagouLogo from "../assets/images/bagou-logo-text.png";
 import bagouIcon from "../assets/images/bagou-icon.png";
 
@@ -15,7 +16,15 @@ export default function Landing() {
             <span className="font-bold text-lg">Bagou</span>
           </div>
           <Button asChild data-testid="button-login-nav">
-            <a href="/api/login" target="_top">Se connecter</a>
+            <a
+              href="/api/login"
+              onClick={(e) => {
+                e.preventDefault();
+                goToAuth("/api/login");
+              }}
+            >
+              Se connecter
+            </a>
           </Button>
         </div>
       </nav>
@@ -36,7 +45,13 @@ export default function Landing() {
             </p>
             <div className="flex flex-wrap items-center gap-3 mb-6">
               <Button size="lg" asChild data-testid="button-get-started">
-                <a href="/api/login" target="_top">
+                <a
+                  href="/api/login"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    goToAuth("/api/login");
+                  }}
+                >
                   Commencer gratuitement
                   <ChevronRight className="w-5 h-5 ml-1" />
                 </a>
@@ -145,7 +160,13 @@ export default function Landing() {
               Rejoignez Bagou et commencez votre entraînement quotidien en communication.
             </p>
             <Button size="lg" asChild data-testid="button-cta-bottom">
-              <a href="/api/login" target="_top">
+              <a
+                href="/api/login"
+                onClick={(e) => {
+                  e.preventDefault();
+                  goToAuth("/api/login");
+                }}
+              >
                 Commencer maintenant
                 <ChevronRight className="w-5 h-5 ml-1" />
               </a>

@@ -4,7 +4,7 @@
 - [Session opening line](session-opening-line.md) — opener is extracted verbatim from `card.situation` (no LLM); empty ⇒ user speaks first. Also: declare derived consts before effects that use them.
 - [E2E card/parcours flows](e2e-card-flows.md) — drive auth-gated rating/celebration/parcours in Playwright; shrink due-queue by inserting future srs_states for all-but-N cards.
 - [Per-profile access control](per-profile-access-control.md) — auth/ownership NOT app-wide; profile-write routes must add `isAuthenticated` + `profile.userId === claims.sub` guard. `/api/profiles` surface now fully gated.
-- [Replit OAuth can't be iframed](replit-auth-iframe.md) — preview shows "replit.com refused to connect" on login; login/logout must target `_top` / `(window.top ?? window).location.href`, a no-op in prod.
+- [Replit OAuth can't run in preview iframe](replit-auth-iframe.md) — framing & top-nav both blocked; route login/logout via `goToAuth()` (new tab when iframed, same-tab in prod).
 - [Account self-deletion](account-self-deletion.md) — DELETE /api/account: cancel Stripe FIRST (502 on fail), delete userProfiles+usageEvents+vocalSessions+users (no FKs), then destroy session server-side.
 - [Server-side roleplay persona](hidden-ai-agenda-server-side.md) — persona stays server-side (exposure + injection); interlocutor reactive (user leads); cache by profile+card+gender; conclusion is AI-signaled (`sceneOver`) not pure turn-count, else closing line repeats; every concluding turn must emit `globalDynamic`.
 - [Stripe (Replit connector + sync)](stripe-replit-sync.md) — connector key is `settings.secret` (not secret_key); no webhook_secret (managed webhooks); `syncBackfill()` skips products/prices — call `syncProducts()`+`syncPrices()` explicitly.

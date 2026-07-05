@@ -49,6 +49,7 @@ import { useAppStore } from "@/lib/store";
 import { getTranslations, type Language } from "@/lib/i18n";
 import { useTheme } from "@/components/theme-provider";
 import { useSubscription } from "@/hooks/use-subscription";
+import { goToAuth } from "@/lib/auth-utils";
 import { useBilling, formatPrice, intervalLabel } from "@/hooks/use-billing";
 import type { UserProfile } from "@shared/schema";
 import {
@@ -170,7 +171,7 @@ export default function Settings() {
       await apiRequest("DELETE", "/api/account");
     },
     onSuccess: () => {
-      (window.top ?? window).location.href = "/api/logout";
+      goToAuth("/api/logout");
     },
     onError: () =>
       toast({
